@@ -117,7 +117,8 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
 .dlg .sugg{font-size:13px;background:var(--taken);border-radius:6px;padding:8px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .dlg .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .dlg .btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
-.dlg .btn.primary:disabled{opacity:.45;cursor:default}
+.dlg a.btn{text-decoration:none}
+.dlg .btn.primary[aria-disabled="true"]{opacity:.45;cursor:default;pointer-events:none}
 .dlg .done{background:var(--free);border-left:4px solid var(--free-border);padding:10px 12px;border-radius:6px;font-size:14px;color:var(--free-fg)}
 @media (prefers-color-scheme: dark){.dlg .msg.bad{color:#ff8a80}.dlg .msg.ok{color:#5fe0c5}}
 </style>
@@ -179,7 +180,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       <label>Repeat email<input type="email" id="femail2" autocomplete="off" inputmode="email" spellcheck="false" autocapitalize="off"></label>
       <div class="sugg" id="sugg" hidden></div>
       <div class="msg" id="fmsg"></div>
-      <div class="row"><button type="button" class="btn" id="fcancel">Cancel</button><button type="submit" class="btn primary" id="fgo" disabled>Continue &#8250;</button></div>
+      <div class="row"><button type="button" class="btn" id="fcancel">Cancel</button><a class="btn primary" id="fgo" href="#" target="_blank" rel="noopener" aria-disabled="true">Continue &#8250;</a></div>
       <div class="done" id="fdone" hidden>The booking form has opened in a new tab. <b>Press Submit there to complete your booking.</b> If no tab opened, <a id="flink" href="#" target="_blank" rel="noopener">click here</a>.</div>
     </form>
   </div>
@@ -342,7 +343,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   }
   function validate() {
     var name = (fname.value || "").trim(), e1 = norm(femail.value), e2 = norm(femail2.value);
-    fgo.disabled = true; sugg.hidden = true;
+    setGo(null); sugg.hidden = true;
     if (!name) { setMsg("Please enter your full name."); return; }
     if (!e1) { setMsg("Please enter your email address."); return; }
     if (!EMAIL_RE.test(e1)) { setMsg("This does not look like a complete email address (name@domain.xx).", "bad"); return; }
@@ -362,16 +363,16 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     if (domainState.domain !== dom) { checkDomain(dom); setMsg("Checking that " + dom + " can receive email\u2026"); return; }
     if (domainState.pending) { setMsg("Checking that " + dom + " can receive email\u2026"); return; }
     if (!domainState.ok) { setMsg("The domain " + dom + " does not seem to receive email. Please check the part after the @.", "bad"); return; }
-    setMsg("Please make sure your details are correct."); fgo.disabled = false;
+    setMsg("Please make sure your details are correct."); setGo(formUrl(dlgSlot, name, e1));
   }
   [fname, femail, femail2].forEach(function (i) { i.addEventListener("input", validate); });
-  document.getElementById("dlg").addEventListener("submit", function (e) {
-    e.preventDefault(); if (fgo.disabled) return;
-    var url = formUrl(dlgSlot, (fname.value || "").trim(), norm(femail.value));
-    document.getElementById("flink").href = url;
-    window.open(url, "_blank", "noopener");
-    fdone.hidden = false; fgo.disabled = true;
+  function setGo(url) { if (url) { fgo.href = url; fgo.removeAttribute("aria-disabled"); } else { fgo.href = "#"; fgo.setAttribute("aria-disabled", "true"); } }
+  fgo.addEventListener("click", function (e) {
+    if (fgo.getAttribute("aria-disabled") === "true" || fgo.getAttribute("href") === "#") { e.preventDefault(); return; }
+    document.getElementById("flink").href = fgo.href;
+    fdone.hidden = false;
   });
+  document.getElementById("dlg").addEventListener("submit", function (e) { e.preventDefault(); if (fgo.getAttribute("aria-disabled") !== "true") fgo.click(); });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;
     document.getElementById("cal").hidden = !ok;
