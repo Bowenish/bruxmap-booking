@@ -53,6 +53,7 @@ p{margin:0}
 /* calendar */
 .calwrap{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}
 .cal{min-width:760px;display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr))}
+.cal[hidden]{display:none}
 .hd{position:sticky;top:0;z-index:3;background:var(--card);border-bottom:1px solid var(--line-strong);padding:10px 8px 8px;min-height:62px}
 .hd.gut{border-right:1px solid var(--line)}
 .hd .n{font-size:22px;font-weight:600;line-height:1.1;display:inline-grid;place-items:center;min-width:34px;height:34px;border-radius:50%}
@@ -138,7 +139,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     </span>
   </div>
 
-  <div id="error" class="err" hidden>The list of free times could not be loaded. Please reload the page, or email bduan@dent.au.dk.</div>
+  <div id="error" class="err" hidden>The list of free times could not be loaded. <button type="button" class="btn" id="retry">Try again</button> If it keeps failing, email bduan@dent.au.dk.</div>
   <div class="calwrap locked" id="calwrap"><div class="loading" id="loading" role="status"><span class="spin" aria-hidden="true"></span>Loading free times from the calendar…</div><div class="cal" id="cal" aria-live="polite" hidden></div></div>
 
   <p class="note">Booking does not commit you to anything; written consent is given on the day. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
@@ -270,18 +271,31 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     go(ws);
   });
 
-  fetch("slots.json?t=" + Date.now(), { cache: "no-store" })
-    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(function (d) {
-      data = d; campStart = parseDate(d.campaign.start); campEnd = parseDate(d.campaign.end);
-      var upd = d.generated_at ? d.generated_at.replace("T", " ").slice(0, 16) : "";
-      document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
-      var t = new Date(), ws = mondayOf(t);
-      if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
-      go(ws); loaded(true);
-      window.addEventListener("resize", render);
-    })
-    .catch(function () { loaded(false); document.getElementById("error").hidden = false; });
+  function load(attempt) {
+    document.getElementById("error").hidden = true;
+    document.getElementById("loading").hidden = false;
+    var ctrl = ("AbortController" in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 20000);
+    fetch("slots.json?t=" + Date.now(), { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        clearTimeout(timer);
+        data = d; campStart = parseDate(d.campaign.start); campEnd = parseDate(d.campaign.end);
+        var upd = d.generated_at ? d.generated_at.replace("T", " ").slice(0, 16) : "";
+        document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
+        var t = new Date(), ws = mondayOf(t);
+        if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
+        go(ws); loaded(true);
+        if (!load.resizeBound) { window.addEventListener("resize", render); load.resizeBound = true; }
+      })
+      .catch(function () {
+        clearTimeout(timer);
+        if (attempt < 1) { setTimeout(function () { load(attempt + 1); }, 1500); return; }
+        loaded(false); document.getElementById("error").hidden = false;
+      });
+  }
+  document.getElementById("retry").addEventListener("click", function () { load(0); });
+  load(0);
 })();
 </script>
 </body>

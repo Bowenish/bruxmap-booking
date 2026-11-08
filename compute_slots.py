@@ -45,7 +45,7 @@ def load_ics(url: str | None, path: str | None) -> bytes:
     if not url:
         sys.exit("give --ics <file> or set ICS_URL")
     req = urllib.request.Request(url, headers={"User-Agent": "bruxmap-slots/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=25) as resp:
         return resp.read()
 
 
