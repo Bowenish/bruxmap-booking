@@ -60,7 +60,7 @@ def _aware(value, end_of_all_day: bool = False) -> dt.datetime:
 
 
 HEARTBEAT_SECONDS = 60          # the heartbeat flow writes a 1-minute Show-as-Free event every 15 min
-HEARTBEAT_MAX_AGE_MIN = 25      # older than this = the automatic booking chain is not alive
+HEARTBEAT_MAX_AGE_MIN = 35      # older than this = the automatic booking chain is not alive (15-min flow: one late run tolerated)
 
 
 def heartbeat_age_min(cal, now: dt.datetime):

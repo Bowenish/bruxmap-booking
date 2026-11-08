@@ -102,7 +102,7 @@ Every link in the chain either keeps working or stops bookings visibly. Nothing 
 |---|---|---|---|
 | VPS / nginx / uvicorn | page unreachable | site down | nothing can be booked (closed) |
 | Published ICS feed (Outlook) | fetch fails | `/healthz` → `stale: true`, `last_error`; page keeps the last good copy, banner after 2 h ("Calendar read at" old) | booking paused after 2 h |
-| Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 25 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
+| Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 35 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
 | Flow `BRUXMAP - booking` turned off | not detected: the Power Automate Management connector is not offered in the AU environment (heartbeat v3 dropped the check) | Power Automate itself emails the owner when it turns a flow off; **to pause bookings, turn the heartbeat flow off** (and do so whenever the booking flow is off) | closed once the heartbeat stops |
 | Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
 | Two submissions for one slot | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |

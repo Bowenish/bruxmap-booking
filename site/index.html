@@ -393,9 +393,8 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     go(ws);
   });
 
-  function load(attempt) {
-    document.getElementById("error").hidden = true;
-    document.getElementById("loading").hidden = false;
+  function load(attempt, quiet) {
+    if (!quiet) { document.getElementById("error").hidden = true; document.getElementById("loading").hidden = false; }
     var ctrl = ("AbortController" in window) ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 20000);
     fetch("slots.json?t=" + Date.now(), { cache: "no-store", signal: ctrl ? ctrl.signal : undefined })
@@ -410,19 +409,23 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
         calwrap.classList.toggle("paused-lock", !!paused);
         var upd = d.generated_at ? d.generated_at.replace("T", " ").slice(0, 16) : "";
         document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
-        var t = new Date(), ws = mondayOf(t);
-        if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
-        go(ws); loaded(true);
+        var t = new Date(), ws = (quiet && weekStart) ? weekStart : mondayOf(t);
+        if (!(quiet && weekStart)) { if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd); }
+        go(ws); if (!quiet) loaded(true);
         if (!load.resizeBound) { window.addEventListener("resize", render); load.resizeBound = true; }
       })
       .catch(function () {
         clearTimeout(timer);
+        if (quiet) return;                       // background refresh: keep what is shown
         if (attempt < 1) { setTimeout(function () { load(attempt + 1); }, 1500); return; }
         loaded(false); document.getElementById("error").hidden = false;
       });
   }
   document.getElementById("retry").addEventListener("click", function () { load(0); });
   load(0);
+  /* keep an open tab current: re-read every 60 s while visible, and when the tab becomes visible again */
+  setInterval(function () { if (!document.hidden && data) load(0, true); }, 60000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && data) load(0, true); });
 })();
 </script>
 </body>

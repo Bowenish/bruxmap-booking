@@ -11,6 +11,7 @@ Environment:
   ICS_URL            secret busy-only ICS link from Outlook "Publish a calendar"  (required)
   ICS_FILE           local .ics instead of ICS_URL (tests)
   CACHE_SECONDS      cache lifetime, default 30
+  SYNC_AFTER_SECONDS copies older than this are refreshed before answering, default 120
   REQUIRE_HEARTBEAT  1 (default) = booking buttons only when the Power Automate heartbeat
                      (a 1-min Free event written every 15 min) is fresh; 0 = never lock
 
@@ -39,6 +40,7 @@ except Exception:  # pragma: no cover
 HERE = pathlib.Path(__file__).resolve().parent
 SITE = HERE / "site"
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
+SYNC_AFTER_SECONDS = int(os.environ.get("SYNC_AFTER_SECONDS", "120"))   # older than this: refresh before answering
 REQUIRE_HEARTBEAT = os.environ.get("REQUIRE_HEARTBEAT", "1") == "1"   # fail closed unless told otherwise
 VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "VERSION").exists() else "dev"
 
@@ -71,19 +73,27 @@ def _refresh() -> None:
 
 
 def _fresh() -> tuple[dict, bool]:
-    """Return (data, cached). A visitor never waits for the feed when any copy exists:
-    stale copies are served at once and refreshed in a background thread."""
+    """Return (data, cached). Fresh copy (< CACHE_SECONDS): served. Slightly stale copy
+    (< SYNC_AFTER_SECONDS): served at once, refreshed in a background thread. Older than that
+    (quiet period, nobody visited): refreshed synchronously first - bounded by the feed timeout -
+    so the first visitor never sees hours-old slots or a false pause; the old copy is the fallback."""
     with _lock:
         data, age = _cache["data"], time.time() - _cache["t"]
-        if data is not None:
-            if age >= CACHE_SECONDS and not _cache["refreshing"]:
+        if data is not None and age < CACHE_SECONDS:
+            return data, True
+        if data is not None and age < SYNC_AFTER_SECONDS:
+            if not _cache["refreshing"]:
                 _cache["refreshing"] = True
                 threading.Thread(target=_safe_refresh, daemon=True).start()
             return data, True
-    _refresh()                       # first load after start: fetch synchronously
+    try:
+        _refresh()
+    except Exception:
+        with _lock:
+            if _cache["data"] is None:
+                raise
+            return _cache["data"], True   # feed down: last good copy (healthz shows last_error)
     with _lock:
-        if _cache["data"] is None:
-            raise RuntimeError("feed unavailable")
         return _cache["data"], False
 
 
