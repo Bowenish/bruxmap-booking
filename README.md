@@ -18,8 +18,8 @@ Flow B "BRUXMAP - booking" (Power Automate, AU tenant):
         calendar re-check (free, ≥ 24 h, in campaign) ─ fails → "please choose another"
         ok → anonymous Private Busy event "BRUXMAP session (ref N)" → confirmation with
              .ics + 5 PDFs from SharePoint → Notify_owner "new booking ref N" to the owner
-Flow "BRUXMAP - heartbeat" every 15 min: booking flow on? SharePoint reachable? → 1-min Free
-        event = heartbeat; the page pauses when it is missing (fail-closed).
+Flow "BRUXMAP - heartbeat" every 15 min: SharePoint reachable? → 1-min Free event = heartbeat;
+        the page pauses when it is missing (fail-closed). Pause bookings = turn this flow off.
 Flow "BRUXMAP - daily digest" 07:00: who comes today and tomorrow (names via the Forms ref).
 Fallback host without a server: GitHub Pages via .github/workflows/pages.yml (5-min refresh).
 ```
@@ -102,13 +102,13 @@ Every link in the chain either keeps working or stops bookings visibly. Nothing 
 | VPS / nginx / uvicorn | page unreachable | site down | nothing can be booked (closed) |
 | Published ICS feed (Outlook) | fetch fails | `/healthz` → `stale: true`, `last_error`; page keeps the last good copy, banner after 2 h ("Calendar read at" old) | booking paused after 2 h |
 | Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 25 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
-| Flow `BRUXMAP - booking` turned off | heartbeat flow sees state ≠ Started | owner gets an email, no heartbeat written → page paused | closed |
+| Flow `BRUXMAP - booking` turned off | not detected: the Power Automate Management connector is not offered in the AU environment (heartbeat v3 dropped the check) | Power Automate itself emails the owner when it turns a flow off; **to pause bookings, turn the heartbeat flow off** (and do so whenever the booking flow is off) | closed once the heartbeat stops |
 | Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
 | Two submissions for one slot | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
 | Code deployed but process not restarted | `/healthz` → `version` older than `VERSION` in git | — | run `pm2 restart bruxmap-booking` |
 | Participant mistypes or garbles the input | page dialog: syntax, repeat, typo suggestion, domain MX; Flow B `InputOK` → Terminate (Cancelled) | nothing — no event, no email, no owner notice; run shows Cancelled | closed for that submission |
 | Well-formed address at a real domain, wrong local part | passes every layer | event created, confirmation bounces (NDR) + `Notify_owner` mail with the same ref | owner deletes the entry; only an emailed verification code would remove this (premium connector — not built) |
-| SharePoint / calendar connection token expires (90 idle days) | heartbeat v2 touches a SharePoint file every run → fails → no heartbeat | `Alert_check_failed` email; page paused | closed |
+| SharePoint / calendar connection token expires (90 idle days) | the heartbeat flow touches a SharePoint file every run → fails → no heartbeat | `Alert_check_failed` email; page paused | closed |
 | Forms trigger connection expires | submissions produce no run | Power Automate turns the flow off and emails; heartbeat then pauses the page | closed; weekly self-test booking recommended |
 | Owner wants to know who comes | — | `Notify_owner` email per booking; `BRUXMAP - daily digest` at 07:00; Forms → Responses | — |
 
