@@ -1,3 +1,4 @@
 -r requirements.txt
 fastapi>=0.115
 uvicorn>=0.30
+python-dotenv>=1.0
