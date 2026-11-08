@@ -76,6 +76,21 @@ p{margin:0}
 .now{position:absolute;left:0;right:0;border-top:2px solid var(--now);z-index:2}
 .now::before{content:"";position:absolute;left:-5px;top:-5px;width:8px;height:8px;border-radius:50%;background:var(--now)}
 .note{font-size:13px;color:var(--muted)}
+/* loading */
+.loading{display:flex;align-items:center;gap:10px;padding:28px 16px;color:var(--muted);font-size:14px}
+.spin{width:18px;height:18px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--accent);animation:spin .9s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--line-strong)}}
+.cal.busy{opacity:.35;pointer-events:none}
+/* eligibility */
+.elig{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.elig h2{font-size:16px;margin:0}
+.elig ul{margin:0;padding-left:20px;display:grid;gap:4px;font-size:14px}
+.elig label{display:flex;gap:10px;align-items:flex-start;font-weight:600;cursor:pointer;margin-top:4px}
+.elig input{width:18px;height:18px;margin-top:2px;flex:none;accent-color:var(--accent)}
+.elig .fine{font-size:12px;color:var(--muted);font-weight:400}
+.calwrap.locked .ev.free{opacity:.45;pointer-events:none;filter:grayscale(.4)}
+.calwrap.locked .ev.free .cta::after{content:" (tick the box above first)";font-weight:400}
 .err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:8px;padding:10px 14px}
 footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
 @media (max-width:640px){ :root{--row:52px} .title{font-size:17px} .hd .n{font-size:18px;min-width:30px;height:30px} }
@@ -95,6 +110,20 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     <span><b>Times</b> Copenhagen local time</span>
   </div>
 
+  <section class="elig" aria-labelledby="eligh">
+    <h2 id="eligh">Before you book: please check that you meet the study requirements</h2>
+    <ul>
+      <li>You are <b>18 years or older</b>.</li>
+      <li>You understand <b>English</b> well enough to follow written and spoken instructions (the session is run in English; the information sheet and consent form also exist in Danish).</li>
+      <li>You have your <b>own natural teeth and no removable dentures</b>, and in your own judgement you can chew and clench firmly without discomfort.</li>
+      <li>You do <b>not</b> currently have jaw pain, a temporomandibular (jaw-joint) disorder, limited mouth opening or other problems of the jaw or chewing muscles, and you are <b>not in orthodontic treatment</b> (braces).</li>
+      <li>Small earpieces fit your ears: no very small ear canals or unusual outer-ear shape, and any ear piercings where the earpieces sit can be taken out during the recording.</li>
+      <li>You are not prone to skin irritation and have <b>no known allergy to adhesive electrodes or electrode gel</b>.</li>
+      <li>Nothing prevents you from performing the jaw movements in the study (chewing, clenching, drinking water).</li>
+    </ul>
+    <label><input type="checkbox" id="eligok"> <span>I have read the participant information and, to the best of my knowledge, I meet these requirements. <span class="fine">This box is not sent anywhere; it only unlocks the booking buttons. Eligibility is confirmed with you on the day, and you can withdraw at any time.</span></span></label>
+  </section>
+
   <div class="bar" role="toolbar" aria-label="Week navigation">
     <button class="btn" id="today">Today</button>
     <span class="nav">
@@ -110,7 +139,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   </div>
 
   <div id="error" class="err" hidden>The list of free times could not be loaded. Please reload the page, or email bduan@dent.au.dk.</div>
-  <div class="calwrap"><div class="cal" id="cal" aria-live="polite"></div></div>
+  <div class="calwrap locked" id="calwrap"><div class="loading" id="loading" role="status"><span class="spin" aria-hidden="true"></span>Loading free times from the calendar…</div><div class="cal" id="cal" aria-live="polite" hidden></div></div>
 
   <p class="note">Booking does not commit you to anything; written consent is given on the day. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
 
@@ -225,6 +254,14 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
 
   function go(ws) { weekStart = ws; render(); }
 
+  var calwrap = document.getElementById("calwrap"), eligok = document.getElementById("eligok");
+  function applyGate() { calwrap.classList.toggle("locked", !eligok.checked); }
+  eligok.checked = false; eligok.addEventListener("change", applyGate); applyGate();
+  function loaded(ok) {
+    document.getElementById("loading").hidden = true;
+    document.getElementById("cal").hidden = !ok;
+  }
+
   document.getElementById("prev").addEventListener("click", function () { go(addDays(weekStart, -7)); });
   document.getElementById("next").addEventListener("click", function () { go(addDays(weekStart, 7)); });
   document.getElementById("today").addEventListener("click", function () {
@@ -241,10 +278,10 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
       var t = new Date(), ws = mondayOf(t);
       if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
-      go(ws);
+      go(ws); loaded(true);
       window.addEventListener("resize", render);
     })
-    .catch(function () { document.getElementById("error").hidden = false; });
+    .catch(function () { loaded(false); document.getElementById("error").hidden = false; });
 })();
 </script>
 </body>
