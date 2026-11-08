@@ -118,7 +118,6 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
 .dlg .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .dlg .btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .dlg .btn.primary:disabled{opacity:.45;cursor:default}
-.dlg .fine{font-size:12px;color:var(--muted);font-weight:400}
 .dlg .done{background:var(--free);border-left:4px solid var(--free-border);padding:10px 12px;border-radius:6px;font-size:14px;color:var(--free-fg)}
 @media (prefers-color-scheme: dark){.dlg .msg.bad{color:#ff8a80}.dlg .msg.ok{color:#5fe0c5}}
 </style>
@@ -180,9 +179,8 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       <label>Repeat email<input type="email" id="femail2" autocomplete="off" inputmode="email" spellcheck="false" autocapitalize="off"></label>
       <div class="sugg" id="sugg" hidden></div>
       <div class="msg" id="fmsg"></div>
-      <p class="fine">We only check that the address is well-formed and that its domain can receive email. Nothing you type here is stored on this page; it goes straight into the Microsoft form that opens next, inside Aarhus University's systems.</p>
       <div class="row"><button type="button" class="btn" id="fcancel">Cancel</button><button type="submit" class="btn primary" id="fgo" disabled>Continue to the Microsoft form &#8250;</button></div>
-      <div class="done" id="fdone" hidden>The Microsoft form has opened in a new tab with your details filled in. <b>Press Submit there.</b> Your time is reserved once the confirmation email arrives. If no tab opened, <a id="flink" href="#" target="_blank" rel="noopener">click here</a>.</div>
+      <div class="done" id="fdone" hidden>The Microsoft form has opened in a new tab. <b>Press Submit there to complete your booking.</b> If no tab opened, <a id="flink" href="#" target="_blank" rel="noopener">click here</a>.</div>
     </form>
   </div>
 
@@ -364,7 +362,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     if (domainState.domain !== dom) { checkDomain(dom); setMsg("Checking that " + dom + " can receive email\u2026"); return; }
     if (domainState.pending) { setMsg("Checking that " + dom + " can receive email\u2026"); return; }
     if (!domainState.ok) { setMsg("The domain " + dom + " does not seem to receive email. Please check the part after the @.", "bad"); return; }
-    setMsg("Looks good. The Microsoft form will open with these details filled in.", "ok"); fgo.disabled = false;
+    setMsg("Please make sure your details are correct."); fgo.disabled = false;
   }
   [fname, femail, femail2].forEach(function (i) { i.addEventListener("input", validate); });
   document.getElementById("dlg").addEventListener("submit", function (e) {
