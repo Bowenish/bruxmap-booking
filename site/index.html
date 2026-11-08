@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>BRUXMAP session booking</title>
+<style>
+/* Participant-facing booking page. Static: reads slots.json (date-times only) from the same
+   folder; a slot button opens the Microsoft Form with the chosen time pre-filled. */
+:root{
+  --bg:#f6f7f9; --fg:#1b2027; --muted:#5c6572; --line:#d8dee6; --card:#ffffff;
+  --accent:#0d6b66; --accent-fg:#ffffff; --accent-soft:#e3f2f0; --off:#f0f2f5;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1317; --fg:#e5e9ee; --muted:#9aa4b2; --line:#2a323d; --card:#161b21;
+         --accent:#3fcab9; --accent-fg:#06211d; --accent-soft:#12302d; --off:#1b2128; color-scheme:dark }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:16px;line-height:1.55;
+  padding:24px max(16px,env(safe-area-inset-right,0px)) 48px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+h1{font-size:clamp(24px,4vw,32px);margin:0;line-height:1.2}
+h2{font-size:18px;margin:0}
+p{margin:0;max-width:70ch}
+.muted{color:var(--muted)}
+.facts{display:grid;gap:8px 20px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.facts div b{display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.status{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;font-size:14px;color:var(--muted)}
+.cal{display:flex;flex-direction:column;gap:10px}
+.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 2px}
+.day{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;min-height:112px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.day.out{background:transparent;border-style:dashed;opacity:.45}
+.day .d{font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:baseline}
+.day .d small{font-weight:400;color:var(--muted)}
+.day .none{font-size:12px;color:var(--muted);margin-top:auto}
+.slot{display:block;width:100%;text-align:center;border:1px solid var(--accent);background:var(--accent-soft);color:var(--fg);border-radius:8px;padding:6px 4px;font:inherit;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer}
+.slot:hover,.slot:focus-visible{background:var(--accent);color:var(--accent-fg);outline:none}
+.legend{font-size:14px;color:var(--muted)}
+.err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:10px;padding:10px 14px}
+footer{border-top:1px solid var(--line);padding-top:14px;font-size:14px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+@media (max-width:640px){
+  .dow{display:none}
+  .week{grid-template-columns:1fr}
+  .day{min-height:0}
+  .day.out{display:none}
+  .day .d::after{content:attr(data-dow);color:var(--muted);font-weight:400;font-size:13px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>BRUXMAP study — choose your session time</h1>
+    <p class="muted">Department of Dentistry and Oral Health, Aarhus University. Pick a free time below; you will then enter your name and email on a short Microsoft form and receive a confirmation by email within a few minutes.</p>
+  </header>
+
+  <section class="facts" aria-label="Key facts">
+    <div><b>Where</b>Finlandsgade 22, 8200 Aarhus N — Building 5125 (Edison), Lab 335, 2nd floor</div>
+    <div><b>How long</b>2–3 hours including preparation and breaks</div>
+    <div><b>Compensation</b>DKK 150 per hour</div>
+    <div><b>Before you book</b>Please read the participant information you received by email. Booking does not commit you to anything; written consent is given on the day.</div>
+  </section>
+
+  <section class="cal" aria-label="Available session times">
+    <div class="status">
+      <h2>Available times</h2>
+      <span id="updated"></span>
+      <span>Times are Copenhagen local time.</span>
+    </div>
+    <div id="error" class="err" hidden>The list of free times could not be loaded. Please reload the page, or email <span class="muted">bduan@dent.au.dk</span>.</div>
+    <div class="dow" id="dow"></div>
+    <div id="weeks"></div>
+    <p class="legend">Only free times are shown. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
+  </section>
+
+  <footer>
+    <span>This page stores no personal data. Your name and email are entered on the Microsoft form and kept inside Aarhus University's systems.</span>
+    <span>Contact: Bowen Duan, Research Assistant — bduan@dent.au.dk · +45 5521 1668</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  /* The Microsoft Form link with the "Chosen session time" question pre-filled.
+     Paste the pre-filled link from Forms (Collect responses → ⋯ → Get pre-filled link, first
+     question filled with TEST) and replace the word TEST by {slot}. */
+  var FORM_URL_TEMPLATE = "REPLACE_WITH_PREFILLED_FORM_LINK_CONTAINING_{slot}";
+
+  var DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function isoDate(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function parseDate(s) { var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function mondayOf(d) { var x = new Date(d); var w = (x.getDay() + 6) % 7; x.setDate(x.getDate() - w); return x; }
+
+  function render(data) {
+    var dow = document.getElementById("dow");
+    DOW.forEach(function (n) { dow.appendChild(el("span", null, n)); });
+
+    var start = parseDate(data.campaign.start), end = parseDate(data.campaign.end);
+    var byDay = data.by_day || {};
+    var weeks = document.getElementById("weeks");
+    weeks.className = "cal";
+    var cur = mondayOf(start);
+    while (cur <= end) {
+      var week = el("div", "week");
+      for (var i = 0; i < 7; i++) {
+        var d = new Date(cur); d.setDate(cur.getDate() + i);
+        var key = isoDate(d);
+        var inWindow = d >= start && d <= end;
+        var day = el("div", "day" + (inWindow ? "" : " out"));
+        var head = el("div", "d");
+        head.setAttribute("data-dow", DOW[i]);
+        head.appendChild(el("span", null, d.getDate() + " " + MONTHS[d.getMonth()]));
+        day.appendChild(head);
+        if (inWindow) {
+          var times = byDay[key] || [];
+          if (times.length === 0) {
+            day.appendChild(el("div", "none", "no free time"));
+          } else {
+            times.forEach(function (t) {
+              var a = el("a", "slot", t);
+              var slotText = key + " " + t;
+              a.href = FORM_URL_TEMPLATE.replace("{slot}", encodeURIComponent(slotText));
+              a.target = "_blank"; a.rel = "noopener";
+              a.setAttribute("aria-label", "Book " + DOW[i] + " " + d.getDate() + " " + MONTHS[d.getMonth()] + " at " + t);
+              day.appendChild(a);
+            });
+          }
+        }
+        week.appendChild(day);
+      }
+      weeks.appendChild(week);
+      cur.setDate(cur.getDate() + 7);
+    }
+    var upd = data.generated_at ? data.generated_at.replace("T", " ").slice(0, 16) : "";
+    document.getElementById("updated").textContent = upd ? "Updated " + upd + " (refreshed every 15 minutes)" : "";
+  }
+
+  fetch("slots.json?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(render)
+    .catch(function () { document.getElementById("error").hidden = false; });
+})();
+</script>
+</body>
+</html>

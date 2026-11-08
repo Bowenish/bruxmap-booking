@@ -1,0 +1,19 @@
+# GitLab Pages: rebuild the public slot list from the owner's published busy/free ICS feed.
+# ICS_URL is a masked CI/CD variable (Settings → CI/CD → Variables). Runs on every push to the
+# default branch and on the pipeline schedule (Build → Pipeline schedules, e.g. */15 * * * *).
+image: python:3.12-slim
+
+pages:
+  stage: deploy
+  script:
+    - pip install -q -r requirements.txt
+    - mkdir -p public
+    - cp -r site/. public/
+    - python compute_slots.py public/slots.json
+  artifacts:
+    paths:
+      - public
+    expire_in: 1 day
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
