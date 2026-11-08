@@ -48,9 +48,11 @@ def test_busy_blocks_and_free_tentative_do_not():
 
 def test_lead_time_and_window():
     slots = cs.compute(_ics(), NOW)["slots"]
-    assert slots[0] == "2026-11-10T09:00:00"          # 9 Nov is inside 48 h of NOW
+    late = cs.compute(_ics(), dt.datetime(2026, 11, 8, 10, 0, tzinfo=TZ))["slots"]
+    assert late[0] == "2026-11-09T12:30:00"           # 9 Nov 09:00 is < 24 h from 8 Nov 10:00
+    assert slots[0] == "2026-11-09T09:00:00"          # NOW + 24 h = 8 Nov 21:20, so 9 Nov is open
     assert slots[-1] == "2026-12-05T15:00:00"         # last campaign day, every day incl. weekends
-    assert len(slots) == 26 * 3                       # 10 Nov .. 5 Dec = 26 days x 3
+    assert len(slots) == 27 * 3                       # 9 Nov .. 5 Dec = 27 days x 3
 
 
 def test_all_day_busy_removes_whole_day_and_boundary_is_exclusive():

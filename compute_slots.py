@@ -34,7 +34,7 @@ CAMPAIGN_START = dt.date(2026, 11, 9)
 CAMPAIGN_END = dt.date(2026, 12, 5)          # inclusive
 START_TIMES = [(9, 0), (12, 30), (15, 0)]
 DURATION = dt.timedelta(minutes=150)
-LEAD = dt.timedelta(hours=48)
+LEAD = dt.timedelta(hours=24)   # owner's rule 2026-11-08 (was 48 h)
 BLOCKING_STATUS = {"BUSY"}
 
 

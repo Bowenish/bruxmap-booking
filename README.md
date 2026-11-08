@@ -18,7 +18,7 @@ Fallback host without a server: GitHub Pages via .github/workflows/pages.yml (5-
 
 Rules (same as the verified Power Automate slot-finder): campaign 2026-11-09 … 2026-12-05,
 every day; starts 09:00 / 12:30 / 15:00 Europe/Copenhagen; 150 min; **only events whose
-`X-MICROSOFT-CDO-BUSYSTATUS` is `BUSY` block**; nothing within 48 h of now. Change them at the
+`X-MICROSOFT-CDO-BUSYSTATUS` is `BUSY` block**; nothing within 24 h of now (owner's rule 2026-11-08). Change them at the
 top of `compute_slots.py`.
 
 ## Files

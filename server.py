@@ -31,8 +31,8 @@ SITE = HERE / "site"
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-_lock = threading.Lock()
-_cache: dict = {"t": 0.0, "data": None}
+_lock = threading.Lock()          # held for the whole refresh: concurrent visitors share one fetch
+_cache: dict = {"t": 0.0, "data": None, "last_error": None, "last_error_t": None}
 _NO_STORE = {"Cache-Control": "no-store"}
 
 
@@ -40,18 +40,21 @@ def _fresh() -> tuple[dict, bool]:
     with _lock:
         if _cache["data"] is not None and time.time() - _cache["t"] < CACHE_SECONDS:
             return _cache["data"], True
-    ics = cs.load_ics(os.environ.get("ICS_URL"), os.environ.get("ICS_FILE"))
-    data = cs.compute(ics, dt.datetime.now(cs.TZ))
-    with _lock:
-        _cache["t"], _cache["data"] = time.time(), data
-    return data, False
+        try:
+            ics = cs.load_ics(os.environ.get("ICS_URL"), os.environ.get("ICS_FILE"))
+            data = cs.compute(ics, dt.datetime.now(cs.TZ))
+        except Exception as exc:  # feed unreachable or unparsable: remember it, keep the last good copy
+            _cache["last_error"], _cache["last_error_t"] = f"{type(exc).__name__}: {exc}"[:200], time.time()
+            raise
+        _cache["t"], _cache["data"], _cache["last_error"] = time.time(), data, None
+        return data, False
 
 
 @app.get("/slots.json")
 def slots() -> JSONResponse:
     try:
         data, cached = _fresh()
-    except Exception:  # feed unreachable: keep serving the last good copy
+    except Exception:
         if _cache["data"] is None:
             return JSONResponse({"error": "calendar feed unavailable"}, status_code=503, headers=_NO_STORE)
         data, cached = _cache["data"], True
@@ -65,4 +68,11 @@ def index() -> FileResponse:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"ok": True, "cache_age_s": round(time.time() - _cache["t"]) if _cache["data"] else None}
+    """ok = the service answers; stale = the feed has failed since the last good read."""
+    return {
+        "ok": True,
+        "cache_age_s": round(time.time() - _cache["t"]) if _cache["data"] else None,
+        "stale": _cache["last_error"] is not None,
+        "last_error": _cache["last_error"],
+        "last_error_age_s": round(time.time() - _cache["last_error_t"]) if _cache["last_error_t"] else None,
+    }
