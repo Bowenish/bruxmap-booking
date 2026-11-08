@@ -6,75 +6,113 @@
 <meta name="robots" content="noindex, nofollow">
 <title>BRUXMAP session booking</title>
 <style>
-/* Participant-facing booking page. Static: reads slots.json (date-times only) from the same
-   folder; a slot button opens the Microsoft Form with the chosen time pre-filled. */
+/* Participant-facing booking page, Outlook-style week view.
+   Reads slots.json (date-times only) from the same origin; a free slot is a clickable block
+   that opens the Microsoft Form with that time pre-filled. */
 :root{
-  --bg:#f6f7f9; --fg:#1b2027; --muted:#5c6572; --line:#d8dee6; --card:#ffffff;
-  --accent:#0d6b66; --accent-fg:#ffffff; --accent-soft:#e3f2f0; --off:#f0f2f5;
-  --font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --bg:#f3f4f6; --fg:#1f2328; --muted:#616a75; --line:#e1e4e8; --line-strong:#c9ced5; --card:#ffffff;
+  --accent:#0f6cbd; --accent-fg:#ffffff;
+  --free:#dff3ee; --free-border:#1b8a6b; --free-fg:#0b3d31;
+  --taken:#f1f2f4; --taken-border:#c9ced5; --taken-fg:#7a838e;
+  --weekend:#fbf1f1; --outside:#f6f7f8; --today:#0f6cbd; --now:#d13438;
+  --font:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  --row:56px; /* one hour */
 }
 @media (prefers-color-scheme: dark){
-  :root{ --bg:#0f1317; --fg:#e5e9ee; --muted:#9aa4b2; --line:#2a323d; --card:#161b21;
-         --accent:#3fcab9; --accent-fg:#06211d; --accent-soft:#12302d; --off:#1b2128; color-scheme:dark }
+  :root{ --bg:#111418; --fg:#e6e9ee; --muted:#9aa4b2; --line:#2a3139; --line-strong:#3a4350; --card:#181d23;
+         --accent:#4f9cf0; --accent-fg:#06213a;
+         --free:#123b33; --free-border:#3fcab9; --free-fg:#d9fff6;
+         --taken:#1e242b; --taken-border:#3a4350; --taken-fg:#8a94a0;
+         --weekend:#1d1a1c; --outside:#15181c; --today:#4f9cf0; --now:#ff6b6b; color-scheme:dark }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:16px;line-height:1.55;
-  padding:24px max(16px,env(safe-area-inset-right,0px)) 48px max(16px,env(safe-area-inset-left,0px))}
-.wrap{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
-h1{font-size:clamp(24px,4vw,32px);margin:0;line-height:1.2}
-h2{font-size:18px;margin:0}
-p{margin:0;max-width:70ch}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.45;
+  padding:16px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1{font-size:clamp(20px,3vw,26px);margin:0;line-height:1.2}
+p{margin:0}
 .muted{color:var(--muted)}
-.facts{display:grid;gap:8px 20px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-.facts div b{display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.status{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;font-size:14px;color:var(--muted)}
-.cal{display:flex;flex-direction:column;gap:10px}
-.week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
-.dow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 2px}
-.day{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px;min-height:112px;display:flex;flex-direction:column;gap:6px;min-width:0}
-.day.out{background:transparent;border-style:dashed;opacity:.45}
-.day .d{font-weight:600;font-size:14px;display:flex;justify-content:space-between;align-items:baseline}
-.day .d small{font-weight:400;color:var(--muted)}
-.day .none{font-size:12px;color:var(--muted);margin-top:auto}
-.slot{display:block;width:100%;text-align:center;border:1px solid var(--accent);background:var(--accent-soft);color:var(--fg);border-radius:8px;padding:6px 4px;font:inherit;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer}
-.slot:hover,.slot:focus-visible{background:var(--accent);color:var(--accent-fg);outline:none}
-.legend{font-size:14px;color:var(--muted)}
-.err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:10px;padding:10px 14px}
-footer{border-top:1px solid var(--line);padding-top:14px;font-size:14px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
-@media (max-width:640px){
-  .dow{display:none}
-  .week{grid-template-columns:1fr}
-  .day{min-height:0}
-  .day.out{display:none}
-  .day .d::after{content:attr(data-dow);color:var(--muted);font-weight:400;font-size:13px}
-}
+.facts{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:14px;color:var(--muted)}
+.facts b{color:var(--fg);font-weight:600}
+
+/* toolbar, like Outlook's */
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.btn{border:1px solid var(--line-strong);background:var(--card);color:var(--fg);border-radius:6px;padding:6px 12px;font:inherit;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--bg)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.nav{display:inline-flex;gap:4px}
+.nav .btn{padding:6px 10px}
+.title{font-size:20px;font-weight:600;margin-left:4px}
+.right{margin-left:auto;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:var(--muted);align-items:center}
+.key{display:inline-flex;align-items:center;gap:6px}
+.key i{display:inline-block;width:14px;height:14px;border-radius:3px;border-left:3px solid}
+.key .f{background:var(--free);border-color:var(--free-border)}
+.key .t{background:var(--taken);border-color:var(--taken-border)}
+
+/* calendar */
+.calwrap{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}
+.cal{min-width:760px;display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr))}
+.hd{position:sticky;top:0;z-index:3;background:var(--card);border-bottom:1px solid var(--line-strong);padding:10px 8px 8px;min-height:62px}
+.hd.gut{border-right:1px solid var(--line)}
+.hd .n{font-size:22px;font-weight:600;line-height:1.1;display:inline-grid;place-items:center;min-width:34px;height:34px;border-radius:50%}
+.hd.today .n{background:var(--today);color:var(--accent-fg)}
+.hd .w{font-size:13px;color:var(--muted);margin-top:2px}
+.hd.wknd,.col.wknd{background:var(--weekend)}
+.hd.out,.col.out{background:var(--outside)}
+.gut{border-right:1px solid var(--line);position:relative}
+.gut .h{height:var(--row);font-size:12px;color:var(--muted);text-align:right;padding-right:6px;transform:translateY(-7px)}
+.col{position:relative;border-right:1px solid var(--line);height:calc(var(--row) * 10)}
+.col:last-child{border-right:0}
+.col .line{position:absolute;left:0;right:0;border-top:1px solid var(--line)}
+.col .line.half{border-top-style:dotted;opacity:.7}
+.col .outmsg{position:absolute;inset:0;display:grid;place-items:center;font-size:12px;color:var(--muted);text-align:center;padding:12px}
+.ev{position:absolute;left:4px;right:6px;border-radius:5px;border-left:4px solid;padding:6px 8px;font-size:13px;line-height:1.3;overflow:hidden;text-decoration:none;display:flex;flex-direction:column;gap:2px}
+.ev.free{background:var(--free);border-color:var(--free-border);color:var(--free-fg);cursor:pointer}
+.ev.free:hover,.ev.free:focus-visible{filter:brightness(.95);outline:2px solid var(--free-border);outline-offset:-2px}
+.ev.free b{font-weight:600}
+.ev.free .cta{margin-top:auto;font-size:12px;font-weight:600}
+.ev.taken{background:var(--taken);border-color:var(--taken-border);color:var(--taken-fg);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.035) 6px 7px)}
+.now{position:absolute;left:0;right:0;border-top:2px solid var(--now);z-index:2}
+.now::before{content:"";position:absolute;left:-5px;top:-5px;width:8px;height:8px;border-radius:50%;background:var(--now)}
+.note{font-size:13px;color:var(--muted)}
+.err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:8px;padding:10px 14px}
+footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+@media (max-width:640px){ :root{--row:52px} .title{font-size:17px} .hd .n{font-size:18px;min-width:30px;height:30px} }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>BRUXMAP study — choose your session time</h1>
-    <p class="muted">Department of Dentistry and Oral Health, Aarhus University. Pick a free time below; you will then enter your name and email on a short Microsoft form and receive a confirmation by email within a few minutes.</p>
+    <p class="muted">Department of Dentistry and Oral Health, Aarhus University. Green blocks are free. Click one, then enter your name and email on the short form; you will get a confirmation by email.</p>
   </header>
 
-  <section class="facts" aria-label="Key facts">
-    <div><b>Where</b>Finlandsgade 22, 8200 Aarhus N — Building 5125 (Edison), Lab 335, 2nd floor</div>
-    <div><b>How long</b>2–3 hours including preparation and breaks</div>
-    <div><b>Compensation</b>DKK 150 per hour</div>
-    <div><b>Before you book</b>Please read the participant information you received by email. Booking does not commit you to anything; written consent is given on the day.</div>
-  </section>
+  <div class="facts">
+    <span><b>Where</b> Finlandsgade 22, 8200 Aarhus N — Building 5125 (Edison), Lab 335, 2nd floor</span>
+    <span><b>How long</b> 2–3 hours incl. preparation and breaks</span>
+    <span><b>Compensation</b> DKK 150 per hour</span>
+    <span><b>Times</b> Copenhagen local time</span>
+  </div>
 
-  <section class="cal" aria-label="Available session times">
-    <div class="status">
-      <h2>Available times</h2>
+  <div class="bar" role="toolbar" aria-label="Week navigation">
+    <button class="btn" id="today">Today</button>
+    <span class="nav">
+      <button class="btn" id="prev" aria-label="Previous week">&#8249;</button>
+      <button class="btn" id="next" aria-label="Next week">&#8250;</button>
+    </span>
+    <span class="title" id="title"></span>
+    <span class="right">
+      <span class="key"><i class="f"></i>free — click to book</span>
+      <span class="key"><i class="t"></i>not available</span>
       <span id="updated"></span>
-      <span>Times are Copenhagen local time.</span>
-    </div>
-    <div id="error" class="err" hidden>The list of free times could not be loaded. Please reload the page, or email <span class="muted">bduan@dent.au.dk</span>.</div>
-    <div class="dow" id="dow"></div>
-    <div id="weeks"></div>
-    <p class="legend">Only free times are shown. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
-  </section>
+    </span>
+  </div>
+
+  <div id="error" class="err" hidden>The list of free times could not be loaded. Please reload the page, or email bduan@dent.au.dk.</div>
+  <div class="calwrap"><div class="cal" id="cal" aria-live="polite"></div></div>
+
+  <p class="note">Booking does not commit you to anything; written consent is given on the day. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
 
   <footer>
     <span>This page stores no personal data. Your name and email are entered on the Microsoft form and kept inside Aarhus University's systems.</span>
@@ -84,73 +122,126 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:14px;color:va
 
 <script>
 (function () {
-  /* The Microsoft Form link with the "Chosen session time" question pre-filled.
-     Paste the pre-filled link from Forms (Collect responses → ⋯ → Get pre-filled link, first
-     question filled with TEST) and replace the word TEST by {slot}. */
+  /* Pre-filled Microsoft Form link: paste the link from Forms (Collect responses → ⋯ →
+     Get pre-filled link, first question filled with TEST) and replace TEST by {slot}. */
   var FORM_URL_TEMPLATE = "REPLACE_WITH_PREFILLED_FORM_LINK_CONTAINING_{slot}";
 
-  var DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var DAY_START = 9, DAY_END = 19;               // visible hours 09:00–19:00
+  var DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
-  function isoDate(d) {
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-  }
+  var data = null, weekStart = null, campStart = null, campEnd = null;
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
   function parseDate(s) { var p = s.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
-  function mondayOf(d) { var x = new Date(d); var w = (x.getDay() + 6) % 7; x.setDate(x.getDate() - w); return x; }
+  function addDays(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
+  function mondayOf(d) { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; }
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function minutes(t) { var p = t.split(":"); return (+p[0]) * 60 + (+p[1]); }
+  function hhmm(m) { return pad(Math.floor(m / 60)) + ":" + pad(m % 60); }
 
-  function render(data) {
-    var dow = document.getElementById("dow");
-    DOW.forEach(function (n) { dow.appendChild(el("span", null, n)); });
-
-    var start = parseDate(data.campaign.start), end = parseDate(data.campaign.end);
-    var byDay = data.by_day || {};
-    var weeks = document.getElementById("weeks");
-    weeks.className = "cal";
-    var cur = mondayOf(start);
-    while (cur <= end) {
-      var week = el("div", "week");
-      for (var i = 0; i < 7; i++) {
-        var d = new Date(cur); d.setDate(cur.getDate() + i);
-        var key = isoDate(d);
-        var inWindow = d >= start && d <= end;
-        var day = el("div", "day" + (inWindow ? "" : " out"));
-        var head = el("div", "d");
-        head.setAttribute("data-dow", DOW[i]);
-        head.appendChild(el("span", null, d.getDate() + " " + MONTHS[d.getMonth()]));
-        day.appendChild(head);
-        if (inWindow) {
-          var times = byDay[key] || [];
-          if (times.length === 0) {
-            day.appendChild(el("div", "none", "no free time"));
-          } else {
-            times.forEach(function (t) {
-              var a = el("a", "slot", t);
-              var slotText = key + " " + t;
-              a.href = FORM_URL_TEMPLATE.replace("{slot}", encodeURIComponent(slotText));
-              a.target = "_blank"; a.rel = "noopener";
-              a.setAttribute("aria-label", "Book " + DOW[i] + " " + d.getDate() + " " + MONTHS[d.getMonth()] + " at " + t);
-              day.appendChild(a);
-            });
-          }
-        }
-        week.appendChild(day);
-      }
-      weeks.appendChild(week);
-      cur.setDate(cur.getDate() + 7);
-    }
-    var upd = data.generated_at ? data.generated_at.replace("T", " ").slice(0, 16) : "";
-    document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
+  function weekTitle(ws) {
+    var we = addDays(ws, 6);
+    if (ws.getMonth() === we.getMonth()) return ws.getDate() + "–" + we.getDate() + " " + MONTHS[ws.getMonth()] + ", " + we.getFullYear();
+    return ws.getDate() + " " + MONTHS[ws.getMonth()] + " – " + we.getDate() + " " + MONTHS[we.getMonth()] + ", " + we.getFullYear();
   }
+
+  function render() {
+    var cal = document.getElementById("cal");
+    cal.innerHTML = "";
+    var today = new Date();
+    var rowPx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 56;
+    var byDay = data.by_day || {};
+    var starts = data.start_times || ["09:00", "12:30", "15:00"];
+    var dur = data.duration_minutes || 150;
+
+    // header row
+    cal.appendChild(el("div", "hd gut"));
+    for (var i = 0; i < 7; i++) {
+      var d = addDays(weekStart, i);
+      var out = d < campStart || d > campEnd;
+      var hd = el("div", "hd" + (i >= 5 ? " wknd" : "") + (out ? " out" : "") + (sameDay(d, today) ? " today" : ""));
+      hd.appendChild(el("span", "n", String(d.getDate())));
+      hd.appendChild(el("div", "w", DOW[i]));
+      cal.appendChild(hd);
+    }
+    // hour gutter
+    var gut = el("div", "gut");
+    for (var h = DAY_START; h < DAY_END; h++) gut.appendChild(el("div", "h", String(h)));
+    cal.appendChild(gut);
+    // day columns
+    for (var j = 0; j < 7; j++) {
+      var day = addDays(weekStart, j), key = iso(day);
+      var outside = day < campStart || day > campEnd;
+      var col = el("div", "col" + (j >= 5 ? " wknd" : "") + (outside ? " out" : ""));
+      for (var k = 0; k <= (DAY_END - DAY_START) * 2; k++) {
+        var line = el("div", "line" + (k % 2 ? " half" : ""));
+        line.style.top = (k * rowPx / 2) + "px";
+        col.appendChild(line);
+      }
+      if (outside) {
+        col.appendChild(el("div", "outmsg", day < campStart ? "Before the booking period" : "After the booking period"));
+      } else {
+        var free = byDay[key] || [];
+        starts.forEach(function (t) {
+          var m0 = minutes(t), m1 = m0 + dur;
+          var top = (m0 - DAY_START * 60) / 60 * rowPx, height = dur / 60 * rowPx - 3;
+          var isFree = free.indexOf(t) !== -1;
+          var ev;
+          if (isFree) {
+            ev = el("a", "ev free");
+            ev.href = FORM_URL_TEMPLATE.replace("{slot}", encodeURIComponent(key + " " + t));
+            ev.target = "_blank"; ev.rel = "noopener";
+            ev.setAttribute("aria-label", "Book " + DOW[j] + " " + day.getDate() + " " + MONTHS[day.getMonth()] + " at " + t);
+            ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
+            ev.appendChild(el("span", null, "Free"));
+            ev.appendChild(el("span", "cta", "Book this time ›"));
+          } else {
+            ev = el("div", "ev taken");
+            ev.setAttribute("aria-label", DOW[j] + " " + t + " not available");
+            ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
+            ev.appendChild(el("span", null, "Not available"));
+          }
+          ev.style.top = top + "px"; ev.style.height = height + "px";
+          col.appendChild(ev);
+        });
+      }
+      if (sameDay(day, today)) {
+        var nowMin = today.getHours() * 60 + today.getMinutes();
+        if (nowMin >= DAY_START * 60 && nowMin <= DAY_END * 60) {
+          var nl = el("div", "now"); nl.style.top = ((nowMin - DAY_START * 60) / 60 * rowPx) + "px"; col.appendChild(nl);
+        }
+      }
+      cal.appendChild(col);
+    }
+    document.getElementById("title").textContent = weekTitle(weekStart);
+    document.getElementById("prev").disabled = addDays(weekStart, -1) < mondayOf(campStart);
+    document.getElementById("next").disabled = addDays(weekStart, 7) > campEnd;
+  }
+
+  function go(ws) { weekStart = ws; render(); }
+
+  document.getElementById("prev").addEventListener("click", function () { go(addDays(weekStart, -7)); });
+  document.getElementById("next").addEventListener("click", function () { go(addDays(weekStart, 7)); });
+  document.getElementById("today").addEventListener("click", function () {
+    var t = new Date(); var ws = mondayOf(t);
+    if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
+    go(ws);
+  });
 
   fetch("slots.json?t=" + Date.now(), { cache: "no-store" })
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(render)
+    .then(function (d) {
+      data = d; campStart = parseDate(d.campaign.start); campEnd = parseDate(d.campaign.end);
+      var upd = d.generated_at ? d.generated_at.replace("T", " ").slice(0, 16) : "";
+      document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
+      var t = new Date(), ws = mondayOf(t);
+      if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd);
+      go(ws);
+      window.addEventListener("resize", render);
+    })
     .catch(function () { document.getElementById("error").hidden = false; });
 })();
 </script>
