@@ -6,13 +6,21 @@ Built 2026-11-08 after Bookings (shared) and Bookings with me were rejected.
 
 ```
 owner's Outlook calendar ──"Publish a calendar" (Can view when I'm busy)──► secret ICS URL
-        │ server.py on the owner's VPS: on every visit fetch the ICS, compute, 30 s cache
+        │ server.py on the owner's VPS: fetch the ICS per visit, compute, 30 s cache
         ▼
 GET /  (site/index.html)   GET /slots.json (date-times only)      ── live, no delay
-        │ participant clicks a time → Microsoft Form pre-filled with "YYYY-MM-DD HH:MM"
-        ▼
-owner (by hand for now; Flow B later): Busy event 150 min in the calendar, participant as
-attendee → confirmation email with the consent forms. The slot vanishes on the next visit.
+        │ participant clicks a free time → dialog: name, email, repeat email
+        │   checks in the browser: syntax · same twice · typo suggestion (gamil → gmail)
+        │   POST /check-domain  (domain only → has MX?)            ── nothing stored
+        ▼ Continue → Microsoft Form opens pre-filled (slot, name, email) → Submit
+Flow B "BRUXMAP - booking" (Power Automate, AU tenant):
+        InputOK (shape of slot / email / name) ─ fails → Terminate, nobody emailed
+        calendar re-check (free, ≥ 24 h, in campaign) ─ fails → "please choose another"
+        ok → anonymous Private Busy event "BRUXMAP session (ref N)" → confirmation with
+             .ics + 5 PDFs from SharePoint → Notify_owner "new booking ref N" to the owner
+Flow "BRUXMAP - heartbeat" every 15 min: booking flow on? SharePoint reachable? → 1-min Free
+        event = heartbeat; the page pauses when it is missing (fail-closed).
+Flow "BRUXMAP - daily digest" 07:00: who comes today and tomorrow (names via the Forms ref).
 Fallback host without a server: GitHub Pages via .github/workflows/pages.yml (5-min refresh).
 ```
 
@@ -26,15 +34,15 @@ top of `compute_slots.py`.
 | File | Role |
 |---|---|
 | `compute_slots.py` | reads the ICS (env `ICS_URL` or `--ics file`), expands recurrences, writes `slots.json` (`slots` list + `by_day` map + metadata). `--now` overrides the clock for tests. |
-| `site/index.html` | the page; served by `server.py` (or copied to `public/` by CI). Set `FORM_URL_TEMPLATE` once (pre-filled Form link with `{slot}`). |
-| `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `/healthz`. `ICS_URL` from `.env`. |
-| `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn. |
+| `site/index.html` | the page; served by `server.py` (or copied to `public/` by CI). Week grid, eligibility gate, paused banner, booking dialog (name / email / repeat email: syntax, typo dictionary `KNOWN`, `POST check-domain`). `FORM_BASE` + `Q` (three Forms question ids) build the pre-filled link. |
+| `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `POST /check-domain` (`{"domain"}` → MX/A lookup, 10-min cache, domain only, never logged), `/healthz`. `ICS_URL` from `.env`. |
+| `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn + python-dotenv + dnspython (MX lookups). |
 | `ecosystem.config.js` | PM2 entry (own venv, own logs, uvicorn on 127.0.0.1:4010, `.env` via `--env-file`). |
 | `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `REQUIRE_HEARTBEAT`). |
 | `VERSION` | deploy marker shown in `/healthz`; bump it with each change. |
 | `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 5 min, by hand, and on `repository_dispatch` type `refresh` (sent by Flow B after each booking → the booked slot vanishes within 1–2 min). `ICS_URL` = repository secret. |
 | `.gitlab-ci.yml` | Same job for AU GitLab Pages (`ICS_URL` = masked CI/CD variable); kept for when AU GitLab becomes available. |
-| `tests/test_compute_slots.py` | rule tests on a synthetic feed. |
+| `tests/` | `test_compute_slots.py` (rules), `test_heartbeat.py` (fail-closed heartbeat), `test_check_domain.py` (domain endpoint: invalid input, cache, no local part). |
 
 ## Deploy (VPS — current, live slots)
 
@@ -54,7 +62,8 @@ pm2 start ecosystem.config.js && pm2 save
 curl -s http://127.0.0.1:4010/healthz && curl -s http://127.0.0.1:4010/slots.json | head -c 300
 
 # later updates
-cd /home/bruxmap_booking && git pull && pm2 restart bruxmap-booking
+cd /home/bruxmap_booking && git pull && venv/bin/pip install -q -r requirements-server.txt && pm2 restart bruxmap-booking
+curl -s http://127.0.0.1:4010/healthz     # version must equal the VERSION file in git
 ```
 
 1Panel → Websites → new reverse-proxy site for the chosen domain → upstream
@@ -97,22 +106,34 @@ Every link in the chain either keeps working or stops bookings visibly. Nothing 
 | Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
 | Two submissions for one slot | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
 | Code deployed but process not restarted | `/healthz` → `version` older than `VERSION` in git | — | run `pm2 restart bruxmap-booking` |
+| Participant mistypes or garbles the input | page dialog: syntax, repeat, typo suggestion, domain MX; Flow B `InputOK` → Terminate (Cancelled) | nothing — no event, no email, no owner notice; run shows Cancelled | closed for that submission |
+| Well-formed address at a real domain, wrong local part | passes every layer | event created, confirmation bounces (NDR) + `Notify_owner` mail with the same ref | owner deletes the entry; only an emailed verification code would remove this (premium connector — not built) |
+| SharePoint / calendar connection token expires (90 idle days) | heartbeat v2 touches a SharePoint file every run → fails → no heartbeat | `Alert_check_failed` email; page paused | closed |
+| Forms trigger connection expires | submissions produce no run | Power Automate turns the flow off and emails; heartbeat then pauses the page | closed; weekly self-test booking recommended |
+| Owner wants to know who comes | — | `Notify_owner` email per booking; `BRUXMAP - daily digest` at 07:00; Forms → Responses | — |
 
 `REQUIRE_HEARTBEAT=1` (default) is the fail-closed switch; set `REQUIRE_HEARTBEAT=0` in `.env`
-only while the heartbeat flow is being set up. Weekly: open `/healthz` once (expect
-`booking_open: true`, small `heartbeat_age_min`, `stale: false`), clear Form responses, check the
-certificate renewal in 1Panel.
+only while the heartbeat flow is being set up. The Form's own "Get email notification of each
+response" must be OFF: `Notify_owner` is the only booking notice, sent after a successful
+confirmation. Weekly: open `/healthz` once (expect `booking_open: true`, small
+`heartbeat_age_min`, `stale: false`), make and delete one test booking with your own address, check
+the certificate renewal in 1Panel. Form responses are the only register of who booked which slot:
+keep each until its session has taken place; delete everything after the campaign.
 
 ## Verify locally
 
 ```powershell
-cd ethics/projects/bruxmap_healthtech_pilot/recruitment/booking_site
+cd <clone of this repository>
 python -m venv .venv; .\.venv\Scripts\pip install -q -r requirements.txt pytest
 .\.venv\Scripts\python -m pytest -q
 $env:ICS_URL = "<busy-only ICS link>"; .\.venv\Scripts\python compute_slots.py public\slots.json
 .\.venv\Scripts\pip install -q -r requirements-server.txt
 $env:ICS_URL = "<busy-only ICS link>"; .\.venv\Scripts\python -m uvicorn server:app --port 4010   # then open http://127.0.0.1:4010
+curl.exe -s -X POST -H "Content-Type: application/json" -d '{"domain":"gmail.com"}' http://127.0.0.1:4010/check-domain   # {"ok":true,...}
 ```
 
-Data: the page, the JSON and the repository hold date-times only. Participant name and email
-go through Microsoft Forms into the AU tenant; bookings are events in the owner's calendar.
+Data: the page, the JSON and the repository hold date-times only. What the participant types in
+the dialog goes straight into the Microsoft Form link (AU tenant); the VPS receives only the email
+domain for the MX check. Bookings are anonymous Private events "BRUXMAP session (ref N)" in the
+owner's calendar; names live in the Forms responses, the owner's mailbox and the Flow run history
+(secure inputs/outputs).

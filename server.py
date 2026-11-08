@@ -21,13 +21,20 @@ from __future__ import annotations
 import datetime as dt
 import os
 import pathlib
+import re
+import socket
 import threading
 import time
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
 import compute_slots as cs
+
+try:  # MX lookup; falls back to an A/AAAA lookup when dnspython is missing
+    import dns.resolver  # type: ignore
+except Exception:  # pragma: no cover
+    dns = None
 
 HERE = pathlib.Path(__file__).resolve().parent
 SITE = HERE / "site"
@@ -94,6 +101,47 @@ def slots() -> JSONResponse:
     except Exception:
         return JSONResponse({"error": "calendar feed unavailable"}, status_code=503, headers=_NO_STORE)
     return JSONResponse(data, headers={**_NO_STORE, "X-Cache": "hit" if cached else "miss"})
+
+
+_DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+_dom_cache: dict = {}
+
+
+def _domain_accepts_mail(domain: str) -> tuple[bool, str]:
+    """True when the domain has MX records (or at least resolves). Only the domain is looked up."""
+    if dns is not None:
+        try:
+            if dns.resolver.resolve(domain, "MX", lifetime=4):
+                return True, "ok"
+        except dns.resolver.NXDOMAIN:
+            return False, "no-mx"
+        except Exception:  # NoAnswer, timeout, ...: fall back below
+            pass
+    try:
+        socket.getaddrinfo(domain, 25)
+        return True, "ok-a"
+    except socket.gaierror:
+        return False, "no-mx"
+    except Exception:
+        return True, "unknown"
+
+
+@app.post("/check-domain")
+def check_domain(payload: dict = Body(...)) -> JSONResponse:
+    """Page helper: {"domain": "example.com"} -> {"ok": bool, "reason": ...}. Cached 10 min; the
+    local part of the address never reaches the server."""
+    domain = str(payload.get("domain", "")).strip().lower().rstrip(".")
+    if not _DOMAIN_RE.match(domain):
+        return JSONResponse({"ok": False, "reason": "invalid"}, headers=_NO_STORE)
+    hit = _dom_cache.get(domain)
+    if hit and time.time() - hit[0] < 600:
+        ok, reason = hit[1], hit[2]
+    else:
+        ok, reason = _domain_accepts_mail(domain)
+        if len(_dom_cache) > 2000:
+            _dom_cache.clear()
+        _dom_cache[domain] = (time.time(), ok, reason)
+    return JSONResponse({"ok": ok, "reason": reason}, headers=_NO_STORE)
 
 
 @app.get("/")

@@ -103,13 +103,31 @@ p{margin:0}
 .calwrap.paused-lock .ev.free .cta{display:none}
 footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
 @media (max-width:640px){ :root{--row:52px} .title{font-size:17px} .hd .n{font-size:18px;min-width:30px;height:30px} }
+/* booking dialog */
+.ovl{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.dlg{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;max-width:540px;width:100%;max-height:100%;overflow:auto;padding:18px 20px;display:flex;flex-direction:column;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.dlg h2{font-size:18px;margin:0}
+.dlg .when{font-weight:600;color:var(--free-fg);background:var(--free);border-left:4px solid var(--free-border);padding:8px 10px;border-radius:6px}
+.dlg label{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600}
+.dlg input[type=text],.dlg input[type=email]{font:inherit;font-size:16px;font-weight:400;padding:9px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--bg);color:var(--fg)}
+.dlg input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.dlg .msg{font-size:13px;min-height:18px;color:var(--muted)}
+.dlg .msg.bad{color:#b3261e}
+.dlg .msg.ok{color:#1b8a6b}
+.dlg .sugg{font-size:13px;background:var(--taken);border-radius:6px;padding:8px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dlg .row{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.dlg .btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.dlg .btn.primary:disabled{opacity:.45;cursor:default}
+.dlg .fine{font-size:12px;color:var(--muted);font-weight:400}
+.dlg .done{background:var(--free);border-left:4px solid var(--free-border);padding:10px 12px;border-radius:6px;font-size:14px;color:var(--free-fg)}
+@media (prefers-color-scheme: dark){.dlg .msg.bad{color:#ff8a80}.dlg .msg.ok{color:#5fe0c5}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>BRUXMAP study — choose your session time</h1>
-    <p class="muted">Department of Dentistry and Oral Health, Aarhus University. Green blocks are free. Click one, then enter your name and email on the short form. Your time is reserved once you receive the confirmation email, usually within a few hours.</p>
+    <p class="muted">Department of Dentistry and Oral Health, Aarhus University. Green blocks are free. Click one, enter your name and email, and press Submit on the Microsoft form that opens. Your time is reserved once you receive the confirmation email, usually within a few minutes.</p>
   </header>
 
   <div class="facts">
@@ -153,6 +171,21 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
 
   <p class="note">Booking does not commit you to anything; written consent is given on the day. The session includes brief chewing and drinking tasks (chewing gum, carrot, marshmallow); if you have a food allergy that could be affected, please email before booking. Please do not send your CPR number or any health information by email.</p>
 
+  <div class="ovl" id="ovl" hidden role="dialog" aria-modal="true" aria-labelledby="dlgh">
+    <form class="dlg" id="dlg" novalidate>
+      <h2 id="dlgh">Book this time</h2>
+      <div class="when" id="dlgwhen"></div>
+      <label>Full name<input type="text" id="fname" autocomplete="name" maxlength="80"></label>
+      <label>Email<input type="email" id="femail" autocomplete="email" inputmode="email" spellcheck="false" autocapitalize="off"></label>
+      <label>Repeat email<input type="email" id="femail2" autocomplete="off" inputmode="email" spellcheck="false" autocapitalize="off"></label>
+      <div class="sugg" id="sugg" hidden></div>
+      <div class="msg" id="fmsg"></div>
+      <p class="fine">We only check that the address is well-formed and that its domain can receive email. Nothing you type here is stored on this page; it goes straight into the Microsoft form that opens next, inside Aarhus University's systems.</p>
+      <div class="row"><button type="button" class="btn" id="fcancel">Cancel</button><button type="submit" class="btn primary" id="fgo" disabled>Continue to the Microsoft form &#8250;</button></div>
+      <div class="done" id="fdone" hidden>The Microsoft form has opened in a new tab with your details filled in. <b>Press Submit there.</b> Your time is reserved once the confirmation email arrives. If no tab opened, <a id="flink" href="#" target="_blank" rel="noopener">click here</a>.</div>
+    </form>
+  </div>
+
   <footer>
     <span>This page stores no personal data. Your name and email are entered on the Microsoft form and kept inside Aarhus University's systems.</span>
     <span>Contact: Bowen Duan, Research Assistant — bduan@dent.au.dk · +45 5521 1668</span>
@@ -163,7 +196,9 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
 (function () {
   /* Pre-filled Microsoft Form link: paste the link from Forms (Collect responses → ⋯ →
      Get pre-filled link, first question filled with TEST) and replace TEST by {slot}. */
-  var FORM_URL_TEMPLATE = "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=Nh39Ycv-yke319DfA3ChmCDLYC0TwEZGpXYwZef48ohUQUVSS1lIUkg3OTQ3SUhQVjUwMDIzM0FOMi4u&r665f14cfb39340fba8f700573df5358c={slot}";
+  var FORM_BASE = "https://forms.cloud.microsoft/Pages/ResponsePage.aspx?id=Nh39Ycv-yke319DfA3ChmCDLYC0TwEZGpXYwZef48ohUQUVSS1lIUkg3OTQ3SUhQVjUwMDIzM0FOMi4u";
+  var Q = { slot: "r665f14cfb39340fba8f700573df5358c", name: "rf80ceb6745bd4f2db2f37fc689d782af", email: "rd6761e382ac4435d915dc8beb2310bfb" };
+  function formUrl(slot, name, email) { return FORM_BASE + "&" + Q.slot + "=" + encodeURIComponent(slot) + "&" + Q.name + "=" + encodeURIComponent(name) + "&" + Q.email + "=" + encodeURIComponent(email); }
 
   var DAY_START = 9, DAY_END = 19;               // visible hours 09:00–19:00
   var DOW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -231,8 +266,9 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
           var ev;
           if (isFree) {
             ev = el("a", "ev free");
-            ev.href = FORM_URL_TEMPLATE.replace("{slot}", encodeURIComponent(key + " " + t));
-            ev.target = "_blank"; ev.rel = "noopener";
+            ev.href = "#book";
+            ev.setAttribute("data-slot", key + " " + t);
+            ev.setAttribute("data-label", DOW[j] + " " + day.getDate() + " " + MONTHS[day.getMonth()] + " " + day.getFullYear() + ", " + hhmm(m0) + " \u2013 " + hhmm(m1));
             ev.setAttribute("aria-label", "Book " + DOW[j] + " " + day.getDate() + " " + MONTHS[day.getMonth()] + " at " + t);
             ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
             ev.appendChild(el("span", null, "Free"));
@@ -279,7 +315,64 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     var slot = e.target.closest ? e.target.closest(".ev.free") : null;
     if (!slot) return;
     if (calwrap.classList.contains("paused-lock")) { e.preventDefault(); document.getElementById("paused").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
-    if (!eligok.checked) { e.preventDefault(); askForTick(); }
+    if (!eligok.checked) { e.preventDefault(); askForTick(); return; }
+    e.preventDefault(); openDialog(slot.getAttribute("data-slot"), slot.getAttribute("data-label"));
+  });
+
+  /* ---- booking dialog: validate in the browser, then open the pre-filled Microsoft form ---- */
+  var KNOWN = ["gmail.com","googlemail.com","hotmail.com","hotmail.dk","hotmail.co.uk","outlook.com","outlook.dk","live.com","live.dk","msn.com","yahoo.com","yahoo.dk","yahoo.co.uk","icloud.com","me.com","mac.com","protonmail.com","proton.me","pm.me","gmx.com","gmx.de","web.de","mail.com","aol.com","au.dk","post.au.dk","uni.au.dk","dent.au.dk","ece.au.dk","cs.au.dk","clin.au.dk","biomed.au.dk","mgmt.au.dk","econ.au.dk","ps.au.dk","cc.au.dk","rm.dk","regionh.dk","ku.dk","dtu.dk","sdu.dk","aau.dk","cbs.dk","ruc.dk","itu.dk","via.dk"];
+  function lev(a, b) { var m = a.length, n = b.length, i, j, prev, tmp, row = []; for (j = 0; j <= n; j++) row[j] = j; for (i = 1; i <= m; i++) { prev = row[0]; row[0] = i; for (j = 1; j <= n; j++) { tmp = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = tmp; } } return row[n]; }
+  function suggestDomain(dom) { if (KNOWN.indexOf(dom) !== -1) return null; var best = null, bd = 3; KNOWN.forEach(function (k) { var d = lev(dom, k); if (d < bd) { bd = d; best = k; } }); return (best && bd <= 2 && dom.length >= 5) ? best : null; }
+  var EMAIL_RE = /^[a-z0-9._%+'-]+@([a-z0-9-]+\.)+[a-z]{2,}$/;
+  var dlgSlot = "", domainState = { domain: "", ok: false, pending: false, reason: "" }, acceptedDomain = "";
+  var ovl = document.getElementById("ovl"), fname = document.getElementById("fname"), femail = document.getElementById("femail"), femail2 = document.getElementById("femail2"), fmsg = document.getElementById("fmsg"), fgo = document.getElementById("fgo"), sugg = document.getElementById("sugg"), fdone = document.getElementById("fdone");
+  function norm(v) { return (v || "").trim().toLowerCase(); }
+  function setMsg(text, cls) { fmsg.textContent = text; fmsg.className = "msg" + (cls ? " " + cls : ""); }
+  function openDialog(slotKey, label) { dlgSlot = slotKey; document.getElementById("dlgwhen").textContent = label; fdone.hidden = true; sugg.hidden = true; acceptedDomain = ""; ovl.hidden = false; validate(); setTimeout(function () { fname.focus(); }, 50); }
+  function closeDialog() { ovl.hidden = true; }
+  document.getElementById("fcancel").addEventListener("click", closeDialog);
+  ovl.addEventListener("click", function (e) { if (e.target === ovl) closeDialog(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !ovl.hidden) closeDialog(); });
+  function checkDomain(domain) {
+    domainState = { domain: domain, ok: false, pending: true, reason: "" };
+    var ctrl = ("AbortController" in window) ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
+    fetch("check-domain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ domain: domain }), signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { return r.ok ? r.json() : { ok: true, reason: "unavailable" }; })
+      .catch(function () { return { ok: true, reason: "unavailable" }; })
+      .then(function (res) { clearTimeout(timer); if (domainState.domain !== domain) return; domainState.pending = false; domainState.ok = !!res.ok; domainState.reason = res.reason || ""; validate(); });
+  }
+  function validate() {
+    var name = (fname.value || "").trim(), e1 = norm(femail.value), e2 = norm(femail2.value);
+    fgo.disabled = true; sugg.hidden = true;
+    if (!name) { setMsg("Please enter your full name."); return; }
+    if (!e1) { setMsg("Please enter your email address."); return; }
+    if (!EMAIL_RE.test(e1)) { setMsg("This does not look like a complete email address (name@domain.xx).", "bad"); return; }
+    var dom = e1.split("@")[1], sg = suggestDomain(dom);
+    if (sg && acceptedDomain !== dom) {
+      sugg.hidden = false; sugg.textContent = "";
+      sugg.appendChild(document.createTextNode("Did you mean @" + sg + "? "));
+      var b1 = el("button", "btn", "Yes, use " + sg); b1.type = "button";
+      b1.addEventListener("click", function () { femail.value = e1.split("@")[0] + "@" + sg; femail2.value = ""; acceptedDomain = ""; validate(); femail2.focus(); });
+      var b2 = el("button", "btn", "No, keep " + dom); b2.type = "button";
+      b2.addEventListener("click", function () { acceptedDomain = dom; validate(); });
+      sugg.appendChild(b1); sugg.appendChild(b2);
+      setMsg("Please confirm the part after the @.", "bad"); return;
+    }
+    if (!e2) { setMsg("Please type your email address again (this catches typos)."); return; }
+    if (e1 !== e2) { setMsg("The two email addresses are not the same.", "bad"); return; }
+    if (domainState.domain !== dom) { checkDomain(dom); setMsg("Checking that " + dom + " can receive email\u2026"); return; }
+    if (domainState.pending) { setMsg("Checking that " + dom + " can receive email\u2026"); return; }
+    if (!domainState.ok) { setMsg("The domain " + dom + " does not seem to receive email. Please check the part after the @.", "bad"); return; }
+    setMsg("Looks good. The Microsoft form will open with these details filled in.", "ok"); fgo.disabled = false;
+  }
+  [fname, femail, femail2].forEach(function (i) { i.addEventListener("input", validate); });
+  document.getElementById("dlg").addEventListener("submit", function (e) {
+    e.preventDefault(); if (fgo.disabled) return;
+    var url = formUrl(dlgSlot, (fname.value || "").trim(), norm(femail.value));
+    document.getElementById("flink").href = url;
+    window.open(url, "_blank", "noopener");
+    fdone.hidden = false; fgo.disabled = true;
   });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;
