@@ -39,7 +39,7 @@ top of `compute_slots.py`.
 | `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `POST /check-domain` (`{"domain"}` → MX/A lookup, 10-min cache, domain only, never logged), `/healthz`. `ICS_URL` from `.env`. |
 | `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn + python-dotenv + dnspython (MX lookups). |
 | `ecosystem.config.js` | PM2 entry (own venv, own logs, uvicorn on 127.0.0.1:4010, `.env` via `--env-file`). |
-| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `REQUIRE_HEARTBEAT`). |
+| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `SYNC_AFTER_SECONDS`, `REQUIRE_HEARTBEAT`, `HOLD_SECONDS`, `HOLD_PER_IP`). |
 | `VERSION` | deploy marker shown in `/healthz`; bump it with each change. |
 | `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 5 min, by hand, and on `repository_dispatch` type `refresh` (sent by Flow B after each booking → the booked slot vanishes within 1–2 min). `ICS_URL` = repository secret. |
 | `.gitlab-ci.yml` | Same job for AU GitLab Pages (`ICS_URL` = masked CI/CD variable); kept for when AU GitLab becomes available. |
@@ -105,7 +105,8 @@ Every link in the chain either keeps working or stops bookings visibly. Nothing 
 | Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 35 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
 | Flow `BRUXMAP - booking` turned off | not detected: the Power Automate Management connector is not offered in the AU environment (heartbeat v3 dropped the check) | Power Automate itself emails the owner when it turns a flow off; **to pause bookings, turn the heartbeat flow off** (and do so whenever the booking flow is off) | closed once the heartbeat stops |
 | Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
-| Two submissions for one slot | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
+| Two visitors look at the same slot | opening the dialog places a 10-min **hold** (`POST /hold`, server memory: slot + random browser token + address for a per-IP cap); others see "Being booked right now"; Cancel / another slot / leaving the page releases it | second visitor cannot select it | no wasted form; Flow B's calendar re-check remains the last line |
+| Two submissions for one slot anyway | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
 | Code deployed but process not restarted | `/healthz` → `version` older than `VERSION` in git | — | run `pm2 restart bruxmap-booking` |
 | Participant mistypes or garbles the input | page dialog: syntax, repeat, typo suggestion, domain MX; Flow B `InputOK` → Terminate (Cancelled) | nothing — no event, no email, no owner notice; run shows Cancelled | closed for that submission |
 | Well-formed address at a real domain, wrong local part | passes every layer | event created, confirmation bounces (NDR) + `Notify_owner` mail with the same ref | owner deletes the entry; only an emailed verification code would remove this (premium connector — not built) |

@@ -74,6 +74,10 @@ p{margin:0}
 .ev.free b{font-weight:600}
 .ev.free .cta{margin-top:auto;font-size:12px;font-weight:600}
 .ev.taken{background:var(--taken);border-color:var(--taken-border);color:var(--taken-fg);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.035) 6px 7px)}
+.ev.held{background:var(--taken);border-color:#d99a00;color:var(--taken-fg);border-left-style:dashed}
+.ev.held b{font-weight:600}
+.holdmsg{background:#fff4d6;color:#5a4300;border:1px solid #e3c36b;border-radius:8px;padding:10px 12px;font-size:14px}
+@media (prefers-color-scheme: dark){.holdmsg{background:#3a2e07;color:#ffe6a3;border-color:#8a6d1a}}
 .now{position:absolute;left:0;right:0;border-top:2px solid var(--now);z-index:2}
 .now::before{content:"";position:absolute;left:-5px;top:-5px;width:8px;height:8px;border-radius:50%;background:var(--now)}
 .note{font-size:13px;color:var(--muted)}
@@ -165,6 +169,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   </div>
 
   <div id="paused" class="paused" hidden><b>Booking is temporarily paused.</b> The automatic confirmation system is not running right now, so times cannot be booked online. Please email <b>bduan@dent.au.dk</b> with your preferred time and we will book it for you.</div>
+  <div id="holdmsg" class="holdmsg" hidden>Someone else is booking that time right now. Please choose another time.</div>
   <div id="error" class="err" hidden>The list of free times could not be loaded. <button type="button" class="btn" id="retry">Try again</button> If it keeps failing, email bduan@dent.au.dk.</div>
   <div class="calwrap locked" id="calwrap"><div class="loading" id="loading" role="status"><span class="spin" aria-hidden="true"></span>Loading free times from the calendar…</div><div class="cal" id="cal" aria-live="polite" hidden></div></div>
 
@@ -231,7 +236,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     cal.innerHTML = "";
     var today = new Date();
     var rowPx = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row")) || 56;
-    var byDay = data.by_day || {};
+    var byDay = data.by_day || {}, held = data.held || [];
     var starts = data.start_times || ["09:00", "12:30", "15:00"];
     var dur = data.duration_minutes || 150;
 
@@ -267,8 +272,15 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
           var m0 = minutes(t), m1 = m0 + dur;
           var top = (m0 - DAY_START * 60) / 60 * rowPx, height = dur / 60 * rowPx - 3;
           var isFree = free.indexOf(t) !== -1;
+          var mine = !ovl.hidden && dlgSlot === key + " " + t;
+          var isHeld = isFree && !mine && held.indexOf(key + " " + t) !== -1;
           var ev;
-          if (isFree) {
+          if (isHeld) {
+            ev = el("div", "ev held");
+            ev.setAttribute("aria-label", DOW[j] + " " + t + " is being booked by someone else right now");
+            ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
+            ev.appendChild(el("span", null, "Being booked right now"));
+          } else if (isFree) {
             ev = el("a", "ev free");
             ev.href = "#book";
             ev.setAttribute("data-slot", key + " " + t);
@@ -333,8 +345,36 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   var dlg = document.getElementById("dlg"), fstep1 = document.getElementById("fstep1"), fstep2 = document.getElementById("fstep2"), fframe = document.getElementById("fframe");
   function norm(v) { return (v || "").trim().toLowerCase(); }
   function setMsg(text, cls) { fmsg.textContent = text; fmsg.className = "msg" + (cls ? " " + cls : ""); }
-  function openDialog(slotKey, label) { dlgSlot = slotKey; document.getElementById("dlgwhen").textContent = label; sugg.hidden = true; acceptedDomain = ""; fstep1.hidden = false; fstep2.hidden = true; fframe.src = "about:blank"; dlg.classList.remove("wide"); ovl.hidden = false; validate(); setTimeout(function () { fname.focus(); }, 50); }
-  function closeDialog() { ovl.hidden = true; fframe.src = "about:blank"; }
+  var HOLD_TOKEN = (function () { var t = null; try { t = sessionStorage.getItem("bm-hold"); } catch (e) {} if (!t) { t = Math.random().toString(36).slice(2) + Date.now().toString(36); try { sessionStorage.setItem("bm-hold", t); } catch (e) {} } return t; })();
+  var submitted = false;
+  function holdSlot(slotKey) {
+    return fetch("hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: slotKey, token: HOLD_TOKEN }) })
+      .then(function (r) { return r.json().catch(function () { return { ok: r.ok }; }); })
+      .catch(function () { return { ok: true, reason: "unavailable" }; });   // the hold is a courtesy; Flow B re-checks the calendar anyway
+  }
+  function releaseHold() {
+    if (!dlgSlot || submitted) return;
+    var body = JSON.stringify({ slot: dlgSlot, token: HOLD_TOKEN });
+    try { fetch("unhold", { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true }).catch(function () {}); } catch (e) {}
+  }
+  window.addEventListener("pagehide", function () {
+    if (ovl.hidden || submitted || !dlgSlot || !navigator.sendBeacon) return;
+    navigator.sendBeacon("unhold", new Blob([JSON.stringify({ slot: dlgSlot, token: HOLD_TOKEN })], { type: "application/json" }));
+  });
+  function openDialog(slotKey, label) {
+    holdSlot(slotKey).then(function (res) {
+      if (!res.ok) {
+        var hm = document.getElementById("holdmsg");
+        hm.textContent = res.reason === "limit" ? "You already have a time reserved in another tab. Finish or cancel that one first." : "Someone else is booking that time right now. Please choose another time.";
+        hm.hidden = false; hm.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(function () { hm.hidden = true; }, 8000);
+        load(0, true); return;
+      }
+      showDialog(slotKey, label);
+    });
+  }
+  function showDialog(slotKey, label) { dlgSlot = slotKey; submitted = false; document.getElementById("dlgwhen").textContent = label; sugg.hidden = true; acceptedDomain = ""; fstep1.hidden = false; fstep2.hidden = true; fframe.src = "about:blank"; dlg.classList.remove("wide"); ovl.hidden = false; validate(); setTimeout(function () { fname.focus(); }, 50); }
+  function closeDialog() { releaseHold(); ovl.hidden = true; fframe.src = "about:blank"; if (!submitted) dlgSlot = ""; load(0, true); }
   document.getElementById("fcancel").addEventListener("click", closeDialog);
   document.getElementById("fclose").addEventListener("click", closeDialog);
   ovl.addEventListener("click", function (e) { if (e.target === ovl) closeDialog(); });
@@ -378,7 +418,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     var url = formUrl(dlgSlot, (fname.value || "").trim(), norm(femail.value));
     document.getElementById("flink").href = url;
     fframe.src = url + "&embed=true";
-    fstep1.hidden = true; fstep2.hidden = false; dlg.classList.add("wide");
+    fstep1.hidden = true; fstep2.hidden = false; dlg.classList.add("wide"); submitted = true;
   });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;

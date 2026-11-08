@@ -12,6 +12,8 @@ Environment:
   ICS_FILE           local .ics instead of ICS_URL (tests)
   CACHE_SECONDS      cache lifetime, default 30
   SYNC_AFTER_SECONDS copies older than this are refreshed before answering, default 120
+  HOLD_SECONDS       how long a slot is reserved while a visitor fills the form, default 600
+  HOLD_PER_IP        concurrent holds allowed per client address, default 2
   REQUIRE_HEARTBEAT  1 (default) = booking buttons only when the Power Automate heartbeat
                      (a 1-min Free event written every 15 min) is fresh; 0 = never lock
 
@@ -27,7 +29,7 @@ import socket
 import threading
 import time
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 import compute_slots as cs
@@ -41,6 +43,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 SITE = HERE / "site"
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 SYNC_AFTER_SECONDS = int(os.environ.get("SYNC_AFTER_SECONDS", "120"))   # older than this: refresh before answering
+HOLD_SECONDS = int(os.environ.get("HOLD_SECONDS", "600"))        # a slot stays reserved this long while someone fills the form
+HOLD_PER_IP = int(os.environ.get("HOLD_PER_IP", "2"))            # concurrent holds per client address
 REQUIRE_HEARTBEAT = os.environ.get("REQUIRE_HEARTBEAT", "1") == "1"   # fail closed unless told otherwise
 VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "VERSION").exists() else "dev"
 
@@ -104,13 +108,95 @@ def _safe_refresh() -> None:
         pass
 
 
+# ---- slot holds: "someone is filling the form for this slot right now" -------------------------
+# In memory only: slot key -> {until, token, ip}. The token is a random id the browser makes up;
+# the address is kept for HOLD_SECONDS at most and only to cap holds per visitor. No names, no emails.
+_holds: dict = {}
+_SLOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+_LOCAL_IPS = {"", "127.0.0.1", "::1"}
+
+
+def _purge_holds(now: float | None = None) -> None:      # caller holds _lock
+    now = time.time() if now is None else now
+    for k in [k for k, v in _holds.items() if v["until"] <= now]:
+        del _holds[k]
+
+
+def _free_keys(data: dict | None) -> set:
+    return {s[:10] + " " + s[11:16] for s in (data or {}).get("slots", [])}
+
+
+def _held_slots(data: dict | None) -> list:
+    """Slot keys currently held, limited to slots the feed still shows as free."""
+    with _lock:
+        _purge_holds()
+        free = _free_keys(data)
+        return sorted(k for k in _holds if k in free)
+
+
+def hold_slot(slot, token, ip: str, data: dict | None) -> tuple[int, dict]:
+    slot, token = str(slot).strip(), str(token).strip()
+    if not _SLOT_RE.match(slot) or not _TOKEN_RE.match(token):
+        return 400, {"ok": False, "reason": "invalid"}
+    with _lock:
+        _purge_holds()
+        if slot not in _free_keys(data):
+            return 409, {"ok": False, "reason": "taken"}
+        cur = _holds.get(slot)
+        if cur and cur["token"] != token:
+            return 409, {"ok": False, "reason": "held", "until": cur["until"]}
+        for k in [k for k, v in _holds.items() if v["token"] == token and k != slot]:
+            del _holds[k]                      # one hold per visitor: a new slot releases the old one
+        if ip not in _LOCAL_IPS and sum(1 for v in _holds.values() if v["ip"] == ip and v["token"] != token) >= HOLD_PER_IP:
+            return 429, {"ok": False, "reason": "limit"}
+        until = time.time() + HOLD_SECONDS
+        _holds[slot] = {"until": until, "token": token, "ip": ip}
+        return 200, {"ok": True, "until": until, "hold_seconds": HOLD_SECONDS}
+
+
+def release_slot(slot, token) -> dict:
+    slot, token = str(slot).strip(), str(token).strip()
+    with _lock:
+        cur = _holds.get(slot)
+        if cur and cur["token"] == token:
+            del _holds[slot]
+            return {"ok": True, "released": True}
+    return {"ok": True, "released": False}
+
+
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[-1].strip()      # right-most entry = the one our own proxy appended
+    return request.client.host if request.client else ""
+
+
+@app.post("/hold")
+def hold(request: Request, payload: dict = Body(...)) -> JSONResponse:
+    try:
+        data, _ = _fresh()
+    except Exception:
+        return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=503, headers=_NO_STORE)
+    status, body = hold_slot(payload.get("slot", ""), payload.get("token", ""), _client_ip(request), data)
+    return JSONResponse(body, status_code=status, headers=_NO_STORE)
+
+
+@app.post("/unhold")
+def unhold(payload: dict = Body(...)) -> JSONResponse:
+    return JSONResponse(release_slot(payload.get("slot", ""), payload.get("token", "")), headers=_NO_STORE)
+
+
 @app.get("/slots.json")
 def slots() -> JSONResponse:
     try:
         data, cached = _fresh()
     except Exception:
         return JSONResponse({"error": "calendar feed unavailable"}, status_code=503, headers=_NO_STORE)
-    return JSONResponse(data, headers={**_NO_STORE, "X-Cache": "hit" if cached else "miss"})
+    body = dict(data)
+    body["held"] = _held_slots(data)
+    body["hold_seconds"] = HOLD_SECONDS
+    return JSONResponse(body, headers={**_NO_STORE, "X-Cache": "hit" if cached else "miss"})
 
 
 _DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
@@ -169,6 +255,7 @@ def healthz() -> dict:
         "booking_open": sysinfo.get("booking_open"),
         "heartbeat_age_min": sysinfo.get("heartbeat_age_min"),
         "heartbeat_required": REQUIRE_HEARTBEAT,
+        "holds": len(_held_slots(_cache["data"])),
         "cache_age_s": round(time.time() - _cache["t"]) if _cache["data"] else None,
         "refreshing": _cache["refreshing"],
         "stale": _cache["last_error"] is not None,
