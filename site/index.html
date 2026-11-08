@@ -145,7 +145,7 @@ footer{border-top:1px solid var(--line);padding-top:14px;font-size:14px;color:va
       cur.setDate(cur.getDate() + 7);
     }
     var upd = data.generated_at ? data.generated_at.replace("T", " ").slice(0, 16) : "";
-    document.getElementById("updated").textContent = upd ? "Updated " + upd + " (refreshed every 15 minutes)" : "";
+    document.getElementById("updated").textContent = upd ? "Updated " + upd + " (refreshed every few minutes and right after each booking)" : "";
   }
 
   fetch("slots.json?t=" + Date.now(), { cache: "no-store" })

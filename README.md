@@ -6,9 +6,9 @@ Built 2026-11-08 after Bookings (shared) and Bookings with me were rejected.
 
 ```
 owner's Outlook calendar ──"Publish a calendar" (Can view when I'm busy)──► secret ICS URL
-        │ GitLab CI (schedule every 15 min + every push) — compute_slots.py
+        │ GitHub Actions (every 5 min, every push, dispatch after each booking) — compute_slots.py
         ▼
-public/slots.json (date-times only) + public/index.html  ──► GitLab Pages
+public/slots.json (date-times only) + public/index.html  ──► GitHub Pages
         │ participant clicks a time → Microsoft Form pre-filled with "YYYY-MM-DD HH:MM"
         ▼
 Power Automate Flow B: re-check the window → Create event (V4), Busy, 150 min, participant
@@ -26,7 +26,7 @@ top of `compute_slots.py`.
 |---|---|
 | `compute_slots.py` | reads the ICS (env `ICS_URL` or `--ics file`), expands recurrences, writes `slots.json` (`slots` list + `by_day` map + metadata). `--now` overrides the clock for tests. |
 | `site/index.html` | the page; copied to `public/` by CI. Set `FORM_URL_TEMPLATE` once (pre-filled Form link with `{slot}`). |
-| `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 15 min, or by hand. `ICS_URL` = repository secret. |
+| `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 5 min, by hand, and on `repository_dispatch` type `refresh` (sent by Flow B after each booking → the booked slot vanishes within 1–2 min). `ICS_URL` = repository secret. |
 | `.gitlab-ci.yml` | Same job for AU GitLab Pages (`ICS_URL` = masked CI/CD variable); kept for when AU GitLab becomes available. |
 | `tests/test_compute_slots.py` | rule tests on a synthetic feed. |
 
@@ -40,7 +40,9 @@ top of `compute_slots.py`.
 4. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 5. Push to `main`; Actions tab → workflow *pages* → green; the site is at
    `https://<account>.github.io/bruxmap-booking/`. Open it in a private window: the day grid
-   shows only free times. The schedule then refreshes it every 15 minutes.
+   shows only free times. The schedule then refreshes it every 5 minutes; Flow B's dispatch
+   refreshes it right after each booking (GitHub connector action *Create a repository dispatch
+   event*, Repository Owner = account, Repository Name = `bruxmap-booking`, Event Name `refresh`).
 
 AU GitLab variant: project Public, Pages access Everyone, shared runner, `ICS_URL` masked
 variable, pipeline schedule `*/15 * * * *`; `.gitlab-ci.yml` is already in place.
