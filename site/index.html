@@ -26,6 +26,7 @@
          --weekend:#1d1a1c; --outside:#15181c; --today:#4f9cf0; --now:#ff6b6b; color-scheme:dark }
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important} /* author display rules must not defeat the hidden attribute */
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.45;
   padding:16px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
 .wrap{max-width:1200px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -53,7 +54,6 @@ p{margin:0}
 /* calendar */
 .calwrap{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:auto}
 .cal{min-width:760px;display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr))}
-.cal[hidden]{display:none}
 .hd{position:sticky;top:0;z-index:3;background:var(--card);border-bottom:1px solid var(--line-strong);padding:10px 8px 8px;min-height:62px}
 .hd.gut{border-right:1px solid var(--line)}
 .hd .n{font-size:22px;font-weight:600;line-height:1.1;display:inline-grid;place-items:center;min-width:34px;height:34px;border-radius:50%}
