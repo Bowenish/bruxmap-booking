@@ -12,7 +12,8 @@ GET /  (site/index.html)   GET /slots.json (date-times only)      ── live, n
         │ participant clicks a free time → dialog: name, email, repeat email
         │   checks in the browser: syntax · same twice · typo suggestion (gamil → gmail)
         │   POST /check-domain  (domain only → has MX?)            ── nothing stored
-        ▼ Continue → Microsoft Form opens pre-filled (slot, name, email) → Submit
+        ▼ Continue → the pre-filled Microsoft Form (slot, name, email) appears inside the dialog
+          (official embed mode; fallback link opens it in a new tab) → Submit
 Flow B "BRUXMAP - booking" (Power Automate, AU tenant):
         InputOK (shape of slot / email / name) ─ fails → Terminate, nobody emailed
         calendar re-check (free, ≥ 24 h, in campaign) ─ fails → "please choose another"
@@ -34,7 +35,7 @@ top of `compute_slots.py`.
 | File | Role |
 |---|---|
 | `compute_slots.py` | reads the ICS (env `ICS_URL` or `--ics file`), expands recurrences, writes `slots.json` (`slots` list + `by_day` map + metadata). `--now` overrides the clock for tests. |
-| `site/index.html` | the page; served by `server.py` (or copied to `public/` by CI). Week grid, eligibility gate, paused banner, booking dialog (name / email / repeat email: syntax, typo dictionary `KNOWN`, `POST check-domain`). `FORM_BASE` + `Q` (three Forms question ids) build the pre-filled link. |
+| `site/index.html` | the page; served by `server.py` (or copied to `public/` by CI). Week grid, eligibility gate, paused banner, booking dialog (name / email / repeat email: syntax, typo dictionary `KNOWN`, `POST check-domain`). `FORM_BASE` + `Q` (three Forms question ids) build the pre-filled link, shown embedded (`&embed=true`) in the dialog. |
 | `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `POST /check-domain` (`{"domain"}` → MX/A lookup, 10-min cache, domain only, never logged), `/healthz`. `ICS_URL` from `.env`. |
 | `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn + python-dotenv + dnspython (MX lookups). |
 | `ecosystem.config.js` | PM2 entry (own venv, own logs, uvicorn on 127.0.0.1:4010, `.env` via `--env-file`). |
