@@ -30,7 +30,8 @@ top of `compute_slots.py`.
 | `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `/healthz`. `ICS_URL` from `.env`. |
 | `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn. |
 | `ecosystem.config.js` | PM2 entry (own venv, own logs, uvicorn on 127.0.0.1:4010, `.env` via `--env-file`). |
-| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`). |
+| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `REQUIRE_HEARTBEAT`). |
+| `VERSION` | deploy marker shown in `/healthz`; bump it with each change. |
 | `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 5 min, by hand, and on `repository_dispatch` type `refresh` (sent by Flow B after each booking → the booked slot vanishes within 1–2 min). `ICS_URL` = repository secret. |
 | `.gitlab-ci.yml` | Same job for AU GitLab Pages (`ICS_URL` = masked CI/CD variable); kept for when AU GitLab becomes available. |
 | `tests/test_compute_slots.py` | rule tests on a synthetic feed. |
@@ -82,6 +83,25 @@ is the current minute. Add a Busy event in Outlook, reload after 30 s: the slot 
 
 AU GitLab variant: project Public, Pages access Everyone, shared runner, `ICS_URL` masked
 variable, pipeline schedule `*/15 * * * *`; `.gitlab-ci.yml` is already in place.
+
+## Fail-closed design and what to check
+
+Every link in the chain either keeps working or stops bookings visibly. Nothing fails silently.
+
+| Link | If it breaks | How it shows | Effect on participants |
+|---|---|---|---|
+| VPS / nginx / uvicorn | page unreachable | site down | nothing can be booked (closed) |
+| Published ICS feed (Outlook) | fetch fails | `/healthz` → `stale: true`, `last_error`; page keeps the last good copy, banner after 2 h ("Calendar read at" old) | booking paused after 2 h |
+| Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 25 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
+| Flow `BRUXMAP - booking` turned off | heartbeat flow sees state ≠ Started | owner gets an email, no heartbeat written → page paused | closed |
+| Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
+| Two submissions for one slot | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
+| Code deployed but process not restarted | `/healthz` → `version` older than `VERSION` in git | — | run `pm2 restart bruxmap-booking` |
+
+`REQUIRE_HEARTBEAT=1` (default) is the fail-closed switch; set `REQUIRE_HEARTBEAT=0` in `.env`
+only while the heartbeat flow is being set up. Weekly: open `/healthz` once (expect
+`booking_open: true`, small `heartbeat_age_min`, `stale: false`), clear Form responses, check the
+certificate renewal in 1Panel.
 
 ## Verify locally
 
