@@ -59,8 +59,33 @@ def _aware(value, end_of_all_day: bool = False) -> dt.datetime:
     return dt.datetime.combine(value, dt.time(0, 0), tzinfo=TZ)
 
 
+HEARTBEAT_SECONDS = 60          # the heartbeat flow writes a 1-minute Show-as-Free event every 15 min
+HEARTBEAT_MAX_AGE_MIN = 25      # older than this = the automatic booking chain is not alive
+
+
+def heartbeat_age_min(cal, now: dt.datetime):
+    """Minutes since the newest heartbeat event (FREE, exactly HEARTBEAT_SECONDS long, not in the
+    future), or None when there is none in the last 24 h. Only the busy/free level of the published
+    feed is needed: titles are not used."""
+    newest = None
+    for ev in recurring_ical_events.of(cal).between(now - dt.timedelta(hours=24), now + dt.timedelta(minutes=5)):
+        if str(ev.get("X-MICROSOFT-CDO-BUSYSTATUS", "")).upper() != "FREE":
+            continue
+        start, end = ev.decoded("DTSTART"), ev.decoded("DTEND") if "DTEND" in ev else None
+        if not isinstance(start, dt.datetime) or not isinstance(end, dt.datetime):
+            continue
+        if abs((end - start).total_seconds() - HEARTBEAT_SECONDS) > 1:
+            continue
+        start = _aware(start)
+        if start > now + dt.timedelta(minutes=5):
+            continue
+        if newest is None or start > newest:
+            newest = start
+    return None if newest is None else max(0.0, (now - newest).total_seconds() / 60)
+
+
 def busy_intervals(ics_bytes: bytes, window_start: dt.datetime, window_end: dt.datetime):
-    cal = icalendar.Calendar.from_ical(ics_bytes)
+    cal = ics_bytes if isinstance(ics_bytes, icalendar.Calendar) else icalendar.Calendar.from_ical(ics_bytes)
     out = []
     for ev in recurring_ical_events.of(cal).between(window_start, window_end):
         status = str(ev.get("X-MICROSOFT-CDO-BUSYSTATUS", "")).upper()
@@ -77,10 +102,13 @@ def busy_intervals(ics_bytes: bytes, window_start: dt.datetime, window_end: dt.d
     return out
 
 
-def compute(ics_bytes: bytes, now: dt.datetime) -> dict:
+def compute(ics_bytes: bytes, now: dt.datetime, require_heartbeat: bool = False) -> dict:
     window_start = dt.datetime.combine(CAMPAIGN_START, dt.time(0, 0), tzinfo=TZ)
     window_end = dt.datetime.combine(CAMPAIGN_END + dt.timedelta(days=1), dt.time(0, 0), tzinfo=TZ)
-    busy = busy_intervals(ics_bytes, window_start, window_end)
+    cal = icalendar.Calendar.from_ical(ics_bytes)
+    busy = busy_intervals(cal, window_start, window_end)
+    hb = heartbeat_age_min(cal, now)
+    booking_open = (hb is not None and hb <= HEARTBEAT_MAX_AGE_MIN) if require_heartbeat else True
     earliest = now + LEAD
     slots: list[str] = []
     day = CAMPAIGN_START
@@ -104,6 +132,12 @@ def compute(ics_bytes: bytes, now: dt.datetime) -> dict:
         "start_times": [f"{h:02d}:{m:02d}" for h, m in START_TIMES],
         "duration_minutes": int(DURATION.total_seconds() // 60),
         "lead_hours": int(LEAD.total_seconds() // 3600),
+        "system": {
+            "booking_open": booking_open,
+            "heartbeat_age_min": None if hb is None else round(hb, 1),
+            "heartbeat_required": require_heartbeat,
+            "heartbeat_max_age_min": HEARTBEAT_MAX_AGE_MIN,
+        },
         "slots": slots,
         "by_day": by_day,
     }
@@ -116,7 +150,8 @@ def main() -> None:
     ap.add_argument("--now", help="override 'now' (local Copenhagen time, e.g. 2026-11-07T21:20) for tests")
     a = ap.parse_args()
     now = dt.datetime.fromisoformat(a.now).replace(tzinfo=TZ) if a.now else dt.datetime.now(TZ)
-    data = compute(load_ics(os.environ.get("ICS_URL"), a.ics), now)
+    data = compute(load_ics(os.environ.get("ICS_URL"), a.ics), now,
+                   require_heartbeat=os.environ.get("REQUIRE_HEARTBEAT", "0") == "1")
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)

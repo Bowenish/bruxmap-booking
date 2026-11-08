@@ -97,6 +97,10 @@ p{margin:0}
 @media (prefers-reduced-motion:reduce){.elig.attn{animation:none}}
 .calwrap.locked .ev.free .cta::after{content:" (tick the box above first)";font-weight:400}
 .err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:8px;padding:10px 14px}
+.paused{border:1px solid #9a4b00;color:#5b2d00;background:#fdf0e2;border-radius:8px;padding:10px 14px;font-size:14px}
+@media (prefers-color-scheme: dark){.paused{color:#f6c58a;background:#2c2110;border-color:#f6b24b}}
+.calwrap.paused-lock .ev.free{opacity:.45;pointer-events:none;filter:grayscale(.6)}
+.calwrap.paused-lock .ev.free .cta{display:none}
 footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
 @media (max-width:640px){ :root{--row:52px} .title{font-size:17px} .hd .n{font-size:18px;min-width:30px;height:30px} }
 </style>
@@ -143,6 +147,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     </span>
   </div>
 
+  <div id="paused" class="paused" hidden><b>Booking is temporarily paused.</b> The automatic confirmation system is not running right now, so times cannot be booked online. Please email <b>bduan@dent.au.dk</b> with your preferred time and we will book it for you.</div>
   <div id="error" class="err" hidden>The list of free times could not be loaded. <button type="button" class="btn" id="retry">Try again</button> If it keeps failing, email bduan@dent.au.dk.</div>
   <div class="calwrap locked" id="calwrap"><div class="loading" id="loading" role="status"><span class="spin" aria-hidden="true"></span>Loading free times from the calendar…</div><div class="cal" id="cal" aria-live="polite" hidden></div></div>
 
@@ -272,7 +277,9 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   eligok.addEventListener("change", function () { if (eligok.checked) { elig.classList.remove("attn"); } });
   document.getElementById("cal").addEventListener("click", function (e) {
     var slot = e.target.closest ? e.target.closest(".ev.free") : null;
-    if (slot && !eligok.checked) { e.preventDefault(); askForTick(); }
+    if (!slot) return;
+    if (calwrap.classList.contains("paused-lock")) { e.preventDefault(); document.getElementById("paused").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+    if (!eligok.checked) { e.preventDefault(); askForTick(); }
   });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;
@@ -297,6 +304,11 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       .then(function (d) {
         clearTimeout(timer);
         data = d; campStart = parseDate(d.campaign.start); campEnd = parseDate(d.campaign.end);
+        var sys = d.system || {}, gen = d.generated_at ? new Date(d.generated_at.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) : null;
+        var staleFeed = gen && !isNaN(gen) && (Date.now() - gen.getTime()) > 120 * 60000;
+        var paused = sys.booking_open === false || staleFeed;
+        document.getElementById("paused").hidden = !paused;
+        calwrap.classList.toggle("paused-lock", !!paused);
         var upd = d.generated_at ? d.generated_at.replace("T", " ").slice(0, 16) : "";
         document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
         var t = new Date(), ws = mondayOf(t);
