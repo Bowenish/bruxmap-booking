@@ -90,7 +90,11 @@ p{margin:0}
 .elig label{display:flex;gap:10px;align-items:flex-start;font-weight:600;cursor:pointer;margin-top:4px}
 .elig input{width:18px;height:18px;margin-top:2px;flex:none;accent-color:var(--accent)}
 .elig .fine{font-size:12px;color:var(--muted);font-weight:400}
-.calwrap.locked .ev.free{opacity:.45;pointer-events:none;filter:grayscale(.4)}
+.calwrap.locked .ev.free{opacity:.55;filter:grayscale(.4);cursor:pointer}
+.elig.attn{box-shadow:0 0 0 4px var(--accent);border-left-color:var(--accent);animation:attn 1.1s ease 2}
+.elig.attn label{color:var(--accent)}
+@keyframes attn{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 6px var(--accent)}}
+@media (prefers-reduced-motion:reduce){.elig.attn{animation:none}}
 .calwrap.locked .ev.free .cta::after{content:" (tick the box above first)";font-weight:400}
 .err{border:1px solid #b3261e;color:#b3261e;background:#fdecea;border-radius:8px;padding:10px 14px}
 footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
@@ -258,6 +262,18 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   var calwrap = document.getElementById("calwrap"), eligok = document.getElementById("eligok");
   function applyGate() { calwrap.classList.toggle("locked", !eligok.checked); }
   eligok.checked = false; eligok.addEventListener("change", applyGate); applyGate();
+  var elig = document.querySelector(".elig"), attnTimer = null;
+  function askForTick() {
+    elig.scrollIntoView({ behavior: "smooth", block: "center" });
+    elig.classList.remove("attn"); void elig.offsetWidth; elig.classList.add("attn");
+    try { eligok.focus({ preventScroll: true }); } catch (e) {}
+    clearTimeout(attnTimer); attnTimer = setTimeout(function () { elig.classList.remove("attn"); }, 2600);
+  }
+  eligok.addEventListener("change", function () { if (eligok.checked) { elig.classList.remove("attn"); } });
+  document.getElementById("cal").addEventListener("click", function (e) {
+    var slot = e.target.closest ? e.target.closest(".ev.free") : null;
+    if (slot && !eligok.checked) { e.preventDefault(); askForTick(); }
+  });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;
     document.getElementById("cal").hidden = !ok;
