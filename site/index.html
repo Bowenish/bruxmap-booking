@@ -104,7 +104,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     <span class="title" id="title"></span>
     <span class="right">
       <span class="key"><i class="f"></i>free — click to book</span>
-      <span class="key"><i class="t"></i>not available</span>
+      <span class="key"><i class="t"></i>not available / too soon</span>
       <span id="updated"></span>
     </span>
   </div>
@@ -199,10 +199,12 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
             ev.appendChild(el("span", null, "Free"));
             ev.appendChild(el("span", "cta", "Book this time ›"));
           } else {
+            var slotStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(m0 / 60), m0 % 60);
+            var tooSoon = slotStart.getTime() < today.getTime() + (data.lead_hours || 48) * 3600000;
             ev = el("div", "ev taken");
-            ev.setAttribute("aria-label", DOW[j] + " " + t + " not available");
+            ev.setAttribute("aria-label", DOW[j] + " " + t + (tooSoon ? " too soon to book" : " not available"));
             ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
-            ev.appendChild(el("span", null, "Not available"));
+            ev.appendChild(el("span", null, tooSoon ? "Too soon (min. " + (data.lead_hours || 48) + " h notice)" : "Not available"));
           }
           ev.style.top = top + "px"; ev.style.height = height + "px";
           col.appendChild(ev);
