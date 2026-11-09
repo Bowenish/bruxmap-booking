@@ -6,3 +6,5 @@ public/
 __pycache__/
 *.pyc
 .pytest_cache/
+holds.json
+holds.json.tmp

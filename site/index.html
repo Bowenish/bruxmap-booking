@@ -76,6 +76,10 @@ p{margin:0}
 .ev.taken{background:var(--taken);border-color:var(--taken-border);color:var(--taken-fg);background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.035) 6px 7px)}
 .ev.held{background:var(--taken);border-color:#d99a00;color:var(--taken-fg);border-left-style:dashed}
 .ev.held b{font-weight:600}
+.ev.held.mine{border-color:var(--accent);color:var(--fg)}
+.ev.booked{background:var(--free);border-color:var(--free-border);color:var(--free-fg)}
+.ev.booked b{font-weight:600}
+.key .h{background:var(--taken);border-color:#d99a00;border-left-style:dashed}
 .holdmsg{background:#fff4d6;color:#5a4300;border:1px solid #e3c36b;border-radius:8px;padding:10px 12px;font-size:14px}
 @media (prefers-color-scheme: dark){.holdmsg{background:#3a2e07;color:#ffe6a3;border-color:#8a6d1a}}
 .now{position:absolute;left:0;right:0;border-top:2px solid var(--now);z-index:2}
@@ -164,6 +168,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     <span class="right">
       <span class="key"><i class="f"></i>free — click to book</span>
       <span class="key"><i class="t"></i>not available / too soon</span>
+      <span class="key"><i class="h"></i>being booked by someone else</span>
       <span id="updated"></span>
     </span>
   </div>
@@ -189,7 +194,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       </div>
       <div id="fstep2" hidden>
         <iframe id="fframe" title="Booking form" src="about:blank" loading="eager" referrerpolicy="no-referrer"></iframe>
-        <div class="msg">Check your details and press <b>Submit</b> in the form above. Your time is reserved once the confirmation email arrives. If the form does not appear, <a id="flink" href="#" target="_blank" rel="noopener">open it in a new tab</a>.</div>
+        <div class="msg" id="fmsg2">Check your details and press <b>Submit</b> in the form above. As soon as the calendar shows your time as taken, your booking went through; the confirmation email follows within a few minutes. If the form does not appear, <a id="flink" href="#" target="_blank" rel="noopener">open it in a new tab</a>.</div>
         <div class="row"><button type="button" class="btn" id="fclose">Close</button></div>
       </div>
     </form>
@@ -271,11 +276,22 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
         starts.forEach(function (t) {
           var m0 = minutes(t), m1 = m0 + dur;
           var top = (m0 - DAY_START * 60) / 60 * rowPx, height = dur / 60 * rowPx - 3;
-          var isFree = free.indexOf(t) !== -1;
-          var mine = !ovl.hidden && dlgSlot === key + " " + t;
-          var isHeld = isFree && !mine && held.indexOf(key + " " + t) !== -1;
+          var slotKey = key + " " + t, isFree = free.indexOf(t) !== -1;
+          var mine = dlgSlot === slotKey && (stage === "dialog" || stage === "form");
+          var isHeld = isFree && !mine && held.indexOf(slotKey) !== -1;
           var ev;
-          if (isHeld) {
+          if (bookedSlot === slotKey) {
+            ev = el("div", "ev booked");
+            ev.setAttribute("aria-label", DOW[j] + " " + t + " booked by you, confirmation email on its way");
+            ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
+            ev.appendChild(el("span", null, "Booked by you \u2713"));
+            ev.appendChild(el("span", null, "Confirmation email on its way"));
+          } else if (mine && stage === "form" && isFree) {
+            ev = el("div", "ev held mine");
+            ev.setAttribute("aria-label", DOW[j] + " " + t + " your booking is being processed");
+            ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
+            ev.appendChild(el("span", null, "Your booking is being processed"));
+          } else if (isHeld) {
             ev = el("div", "ev held");
             ev.setAttribute("aria-label", DOW[j] + " " + t + " is being booked by someone else right now");
             ev.appendChild(el("b", null, hhmm(m0) + " – " + hhmm(m1)));
@@ -346,26 +362,28 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   function norm(v) { return (v || "").trim().toLowerCase(); }
   function setMsg(text, cls) { fmsg.textContent = text; fmsg.className = "msg" + (cls ? " " + cls : ""); }
   var HOLD_TOKEN = (function () { var t = null; try { t = sessionStorage.getItem("bm-hold"); } catch (e) {} if (!t) { t = Math.random().toString(36).slice(2) + Date.now().toString(36); try { sessionStorage.setItem("bm-hold", t); } catch (e) {} } return t; })();
-  var submitted = false;
-  function holdSlot(slotKey) {
-    return fetch("hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: slotKey, token: HOLD_TOKEN }) })
+  var stage = "", stageSince = 0, lastHold = 0, lastLoad = 0, lastSig = "", bookedSlot = "", lostSlot = false, hinted = false;
+  var RENEW_MS = 90000, RENEW_CAP_MS = 30 * 60000, WATCH_MS = 5000, WATCH_CAP_MS = 30 * 60000, WATCH_HINT_MS = 15 * 60000;
+  var fmsg2 = document.getElementById("fmsg2"), FMSG2_DEFAULT = fmsg2.innerHTML;
+  function holdSlot(slotKey, st) {
+    return fetch("hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slot: slotKey, token: HOLD_TOKEN, stage: st || "dialog" }) })
       .then(function (r) { return r.json().catch(function () { return { ok: r.ok }; }); })
       .catch(function () { return { ok: true, reason: "unavailable" }; });   // the hold is a courtesy; Flow B re-checks the calendar anyway
   }
   function releaseHold() {
-    if (!dlgSlot || submitted) return;
+    if (!dlgSlot || stage === "form") return;        // after Continue the hold stays: the server keeps the slot hidden while Flow B works
     var body = JSON.stringify({ slot: dlgSlot, token: HOLD_TOKEN });
     try { fetch("unhold", { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true }).catch(function () {}); } catch (e) {}
   }
   window.addEventListener("pagehide", function () {
-    if (ovl.hidden || submitted || !dlgSlot || !navigator.sendBeacon) return;
+    if (ovl.hidden || stage === "form" || !dlgSlot || !navigator.sendBeacon) return;
     navigator.sendBeacon("unhold", new Blob([JSON.stringify({ slot: dlgSlot, token: HOLD_TOKEN })], { type: "application/json" }));
   });
   function openDialog(slotKey, label) {
-    holdSlot(slotKey).then(function (res) {
+    holdSlot(slotKey, "dialog").then(function (res) {
       if (!res.ok) {
         var hm = document.getElementById("holdmsg");
-        hm.textContent = res.reason === "limit" ? "You already have a time reserved in another tab. Finish or cancel that one first." : "Someone else is booking that time right now. Please choose another time.";
+        hm.textContent = res.reason === "limit" ? "Several bookings are in progress from your connection (or your other tabs) right now. Please finish or cancel those first, or try again in a few minutes." : "Someone else is booking that time right now. Please choose another time.";
         hm.hidden = false; hm.scrollIntoView({ behavior: "smooth", block: "center" });
         setTimeout(function () { hm.hidden = true; }, 8000);
         load(0, true); return;
@@ -373,8 +391,8 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
       showDialog(slotKey, label);
     });
   }
-  function showDialog(slotKey, label) { dlgSlot = slotKey; submitted = false; document.getElementById("dlgwhen").textContent = label; sugg.hidden = true; acceptedDomain = ""; fstep1.hidden = false; fstep2.hidden = true; fframe.src = "about:blank"; dlg.classList.remove("wide"); ovl.hidden = false; validate(); setTimeout(function () { fname.focus(); }, 50); }
-  function closeDialog() { releaseHold(); ovl.hidden = true; fframe.src = "about:blank"; if (!submitted) dlgSlot = ""; load(0, true); }
+  function showDialog(slotKey, label) { dlgSlot = slotKey; stage = "dialog"; stageSince = lastHold = Date.now(); lostSlot = false; hinted = false; fmsg2.innerHTML = FMSG2_DEFAULT; fmsg2.className = "msg"; document.getElementById("dlgwhen").textContent = label; sugg.hidden = true; acceptedDomain = ""; fstep1.hidden = false; fstep2.hidden = true; fframe.src = "about:blank"; dlg.classList.remove("wide"); ovl.hidden = false; validate(); setTimeout(function () { fname.focus(); }, 50); }
+  function closeDialog() { releaseHold(); ovl.hidden = true; fframe.src = "about:blank"; if (stage !== "form") { stage = ""; dlgSlot = ""; } load(0, true); }
   document.getElementById("fcancel").addEventListener("click", closeDialog);
   document.getElementById("fclose").addEventListener("click", closeDialog);
   ovl.addEventListener("click", function (e) { if (e.target === ovl) closeDialog(); });
@@ -391,6 +409,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   function validate() {
     var name = (fname.value || "").trim(), e1 = norm(femail.value), e2 = norm(femail2.value);
     fgo.disabled = true; sugg.hidden = true;
+    if (lostSlot) return;                                   // the slot went to someone else while typing: message already shown
     if (!name) { setMsg("Please enter your full name."); return; }
     if (!e1) { setMsg("Please enter your email address."); return; }
     if (!EMAIL_RE.test(e1)) { setMsg("This does not look like a complete email address (name@domain.xx).", "bad"); return; }
@@ -418,7 +437,12 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
     var url = formUrl(dlgSlot, (fname.value || "").trim(), norm(femail.value));
     document.getElementById("flink").href = url;
     fframe.src = url + "&embed=true";
-    fstep1.hidden = true; fstep2.hidden = false; dlg.classList.add("wide"); submitted = true;
+    fstep1.hidden = true; fstep2.hidden = false; dlg.classList.add("wide");
+    stage = "form"; stageSince = lastHold = Date.now(); hinted = false;
+    holdSlot(dlgSlot, "form").then(function (res) {       // long tail on the server: the slot stays hidden while Flow B works, even if this tab is closed
+      if (!res.ok && (res.reason === "held" || res.reason === "taken")) { fmsg2.textContent = "Note: this time may just have been taken by someone else. If no confirmation email arrives within a few minutes, please choose another time."; fmsg2.className = "msg bad"; }
+    });
+    if (data && weekStart) render();
   });
   function loaded(ok) {
     document.getElementById("loading").hidden = true;
@@ -434,6 +458,7 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   });
 
   function load(attempt, quiet) {
+    lastLoad = Date.now();
     if (!quiet) { document.getElementById("error").hidden = true; document.getElementById("loading").hidden = false; }
     var ctrl = ("AbortController" in window) ? new AbortController() : null;
     var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 20000);
@@ -451,7 +476,10 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
         document.getElementById("updated").textContent = upd ? "Calendar read at " + upd : "";
         var t = new Date(), ws = (quiet && weekStart) ? weekStart : mondayOf(t);
         if (!(quiet && weekStart)) { if (t < campStart) ws = mondayOf(campStart); else if (t > campEnd) ws = mondayOf(campEnd); }
-        go(ws); if (!quiet) loaded(true);
+        var sig = JSON.stringify([d.slots, d.held, paused, Math.floor(Date.now() / 60000)]);
+        if (!quiet || sig !== lastSig) go(ws);            // redraw only when something visible changed: no flicker, keyboard focus stays
+        lastSig = sig; if (!quiet) loaded(true);
+        if (stage === "form" && dlgSlot && !isFreeKey(dlgSlot)) markBooked();   // our slot left the free list: Flow B has written the event
         if (!load.resizeBound) { window.addEventListener("resize", render); load.resizeBound = true; }
       })
       .catch(function () {
@@ -463,9 +491,47 @@ footer{border-top:1px solid var(--line);padding-top:12px;font-size:13px;color:va
   }
   document.getElementById("retry").addEventListener("click", function () { load(0); });
   load(0);
-  /* keep an open tab current: re-read every 60 s while visible, and when the tab becomes visible again */
-  setInterval(function () { if (!document.hidden && data) load(0, true); }, 60000);
-  document.addEventListener("visibilitychange", function () { if (!document.hidden && data) load(0, true); });
+  /* one clock for everything that keeps an open tab honest:
+     - re-read slots.json every poll_seconds (server-set, default 10 s) while the tab is visible, so a
+       slot someone else is booking greys out quickly and a booked one disappears;
+     - while the dialog is open, renew our hold every 90 s (up to 30 min), so a slow typist is not
+       overtaken by someone who clicks later; a lost hold is reported inside the dialog;
+     - after Continue, re-read every 5 s (up to 30 min) until the slot leaves the free list = Flow B
+       has written the event: the block turns into "Booked by you". */
+  function isFreeKey(k) { var day = (data && data.by_day && data.by_day[k.slice(0, 10)]) || []; return day.indexOf(k.slice(11)) !== -1; }
+  function renewHold() {
+    holdSlot(dlgSlot, "dialog").then(function (res) {
+      if (res.ok || stage !== "dialog") return;
+      if (res.reason === "held" || res.reason === "taken") lostHold(res.reason);
+      else if (res.reason === "expired") lastHold = Infinity;          // server ceiling reached: stop renewing, the dialog stays usable
+    });
+  }
+  function lostHold(reason) {
+    lostSlot = true; fgo.disabled = true; sugg.hidden = true;
+    setMsg(reason === "taken" ? "This time has just been booked by someone else. Please close this box and choose another time."
+                              : "Your reservation of this time ran out and someone else is booking it now. Please close this box and choose another time.", "bad");
+  }
+  function markBooked() {
+    bookedSlot = dlgSlot; stage = "";
+    fmsg2.textContent = "The calendar now shows this time as taken: your booking went through. The confirmation email with the participant information is on its way (check the spam folder if it has not arrived within 15 minutes)."; fmsg2.className = "msg ok";
+    if (data && weekStart) render();
+  }
+  function tick() {
+    var now = Date.now();
+    if (stage === "dialog" && dlgSlot && now - lastHold >= RENEW_MS && now - stageSince < RENEW_CAP_MS) { lastHold = now; renewHold(); }
+    if (stage === "form" && dlgSlot) {
+      if (now - stageSince >= WATCH_CAP_MS) { stage = ""; if (data && weekStart) render(); }
+      else if (!hinted && now - stageSince >= WATCH_HINT_MS) { hinted = true; fmsg2.textContent = "The calendar has not updated yet. If you pressed Submit, your confirmation email is on its way; if nothing arrives within an hour, email bduan@dent.au.dk."; fmsg2.className = "msg"; }
+    }
+    var every = (stage === "form" && dlgSlot) ? WATCH_MS : ((data && data.poll_seconds) || 10) * 1000;
+    if (!document.hidden && data && now - lastLoad >= every) load(0, true);
+  }
+  setInterval(tick, 1000);
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden || !data) return;
+    load(0, true);
+    if (stage === "dialog" && dlgSlot) { lastHold = Date.now(); renewHold(); }     // a tab frozen in the background re-asserts its hold at once
+  });
 })();
 </script>
 </body>

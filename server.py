@@ -13,7 +13,11 @@ Environment:
   CACHE_SECONDS      cache lifetime, default 30
   SYNC_AFTER_SECONDS copies older than this are refreshed before answering, default 120
   HOLD_SECONDS       how long a slot is reserved while a visitor fills the form, default 600
-  HOLD_PER_IP        concurrent holds allowed per client address, default 2
+  HOLD_PER_IP        concurrent holds allowed per client address, default 5
+  HOLD_FORM_SECONDS  how long a slot stays reserved after the visitor reached the form, default 1800
+  HOLD_MAX_SECONDS   no hold lives longer than this, renewals included, default 3600
+  HOLDS_FILE         where holds survive a restart (default holds.json next to this file; "" = memory only)
+  POLL_SECONDS       how often an open page re-reads the slots, default 10
   REQUIRE_HEARTBEAT  1 (default) = booking buttons only when the Power Automate heartbeat
                      (a 1-min Free event written every 15 min) is fresh; 0 = never lock
 
@@ -22,6 +26,7 @@ Run (behind nginx):  uvicorn server:app --host 127.0.0.1 --port 4010
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import pathlib
 import re
@@ -44,7 +49,11 @@ SITE = HERE / "site"
 CACHE_SECONDS = int(os.environ.get("CACHE_SECONDS", "30"))
 SYNC_AFTER_SECONDS = int(os.environ.get("SYNC_AFTER_SECONDS", "120"))   # older than this: refresh before answering
 HOLD_SECONDS = int(os.environ.get("HOLD_SECONDS", "600"))        # a slot stays reserved this long while someone fills the form
-HOLD_PER_IP = int(os.environ.get("HOLD_PER_IP", "2"))            # concurrent holds per client address
+HOLD_PER_IP = int(os.environ.get("HOLD_PER_IP", "5"))            # concurrent holds per client address (campus NAT: several visitors share one)
+HOLD_FORM_SECONDS = int(os.environ.get("HOLD_FORM_SECONDS", "1800"))   # once the visitor reached the form: covers Flow B + the feed's publish lag
+HOLD_MAX_SECONDS = int(os.environ.get("HOLD_MAX_SECONDS", "3600"))     # hard ceiling per hold, renewals included
+HOLDS_FILE = os.environ.get("HOLDS_FILE", str(HERE / "holds.json"))    # holds survive pm2 restart / deploy; "" = memory only
+POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "10"))               # the page re-reads slots.json this often while visible
 REQUIRE_HEARTBEAT = os.environ.get("REQUIRE_HEARTBEAT", "1") == "1"   # fail closed unless told otherwise
 VERSION = (HERE / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "VERSION").exists() else "dev"
 
@@ -109,12 +118,57 @@ def _safe_refresh() -> None:
 
 
 # ---- slot holds: "someone is filling the form for this slot right now" -------------------------
-# In memory only: slot key -> {until, token, ip}. The token is a random id the browser makes up;
-# the address is kept for HOLD_SECONDS at most and only to cap holds per visitor. No names, no emails.
+# slot key -> {until, token, ip, created, stage}. The token is a random id the browser makes up; the
+# address is kept only to cap holds per visitor; stage is "dialog" (typing name/email, renewed by the
+# page every 90 s) or "form" (reached the Microsoft Form: longer tail so the slot stays hidden until
+# Flow B's event shows up in the feed). Mirrored to HOLDS_FILE after every change so a restart keeps
+# them. No names, no emails.
 _holds: dict = {}
+_holds_error: str | None = None
 _SLOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _LOCAL_IPS = {"", "127.0.0.1", "::1"}
+
+
+def _save_holds() -> None:          # caller holds _lock; never raises (a full disk must not block bookings)
+    global _holds_error
+    if not HOLDS_FILE:
+        return
+    try:
+        tmp = HOLDS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_holds, fh)
+        os.replace(tmp, HOLDS_FILE)
+        _holds_error = None
+    except Exception as exc:
+        _holds_error = f"{type(exc).__name__}: {exc}"[:200]
+
+
+def _load_holds() -> int:
+    """Restore the holds the previous process wrote (pm2 restart, deploy). Expired or malformed
+    entries are dropped. Returns how many were restored."""
+    global _holds_error
+    if not HOLDS_FILE or not os.path.exists(HOLDS_FILE):
+        return 0
+    try:
+        raw = json.loads(pathlib.Path(HOLDS_FILE).read_text(encoding="utf-8"))
+    except Exception as exc:
+        _holds_error = f"{type(exc).__name__}: {exc}"[:200]
+        return 0
+    now, n = time.time(), 0
+    with _lock:
+        for slot, v in (raw.items() if isinstance(raw, dict) else []):
+            try:
+                until = float(v["until"])
+                if not _SLOT_RE.match(str(slot)) or not _TOKEN_RE.match(str(v["token"])) or until <= now:
+                    continue
+                _holds[str(slot)] = {"until": until, "token": str(v["token"]), "ip": str(v.get("ip", "")),
+                                     "created": float(v.get("created", until - HOLD_SECONDS)),
+                                     "stage": "form" if v.get("stage") == "form" else "dialog"}
+                n += 1
+            except Exception:
+                continue
+    return n
 
 
 def _purge_holds(now: float | None = None) -> None:      # caller holds _lock
@@ -135,8 +189,13 @@ def _held_slots(data: dict | None) -> list:
         return sorted(k for k in _holds if k in free)
 
 
-def hold_slot(slot, token, ip: str, data: dict | None) -> tuple[int, dict]:
+def hold_slot(slot, token, ip: str, data: dict | None, stage: str = "dialog") -> tuple[int, dict]:
+    """Place, renew or upgrade a hold. Same token + same slot = renewal (the expiry moves, `created`
+    does not). stage "form" = the visitor has reached the Microsoft Form: the slot then stays hidden
+    for HOLD_FORM_SECONDS even if the tab is closed, long enough for Flow B's event to reach the
+    feed. Nothing outlives HOLD_MAX_SECONDS."""
     slot, token = str(slot).strip(), str(token).strip()
+    stage = "form" if stage == "form" else "dialog"
     if not _SLOT_RE.match(slot) or not _TOKEN_RE.match(token):
         return 400, {"ok": False, "reason": "invalid"}
     with _lock:
@@ -146,13 +205,21 @@ def hold_slot(slot, token, ip: str, data: dict | None) -> tuple[int, dict]:
         cur = _holds.get(slot)
         if cur and cur["token"] != token:
             return 409, {"ok": False, "reason": "held", "until": cur["until"]}
-        for k in [k for k, v in _holds.items() if v["token"] == token and k != slot]:
-            del _holds[k]                      # one hold per visitor: a new slot releases the old one
+        now = time.time()
+        created = cur.get("created", now) if cur else now
+        if now - created > HOLD_MAX_SECONDS:
+            del _holds[slot]
+            _save_holds()
+            return 409, {"ok": False, "reason": "expired"}
         if ip not in _LOCAL_IPS and sum(1 for v in _holds.values() if v["ip"] == ip and v["token"] != token) >= HOLD_PER_IP:
             return 429, {"ok": False, "reason": "limit"}
-        until = time.time() + HOLD_SECONDS
-        _holds[slot] = {"until": until, "token": token, "ip": ip}
-        return 200, {"ok": True, "until": until, "hold_seconds": HOLD_SECONDS}
+        for k in [k for k, v in _holds.items() if v["token"] == token and k != slot]:
+            del _holds[k]                      # one hold per visitor: a new slot releases the old one
+        seconds = HOLD_FORM_SECONDS if stage == "form" else HOLD_SECONDS
+        until = min(now + seconds, created + HOLD_MAX_SECONDS)
+        _holds[slot] = {"until": until, "token": token, "ip": ip, "created": created, "stage": stage}
+        _save_holds()
+        return 200, {"ok": True, "until": until, "hold_seconds": seconds, "stage": stage}
 
 
 def release_slot(slot, token) -> dict:
@@ -161,6 +228,7 @@ def release_slot(slot, token) -> dict:
         cur = _holds.get(slot)
         if cur and cur["token"] == token:
             del _holds[slot]
+            _save_holds()
             return {"ok": True, "released": True}
     return {"ok": True, "released": False}
 
@@ -178,7 +246,7 @@ def hold(request: Request, payload: dict = Body(...)) -> JSONResponse:
         data, _ = _fresh()
     except Exception:
         return JSONResponse({"ok": False, "reason": "unavailable"}, status_code=503, headers=_NO_STORE)
-    status, body = hold_slot(payload.get("slot", ""), payload.get("token", ""), _client_ip(request), data)
+    status, body = hold_slot(payload.get("slot", ""), payload.get("token", ""), _client_ip(request), data, str(payload.get("stage", "dialog")))
     return JSONResponse(body, status_code=status, headers=_NO_STORE)
 
 
@@ -196,6 +264,7 @@ def slots() -> JSONResponse:
     body = dict(data)
     body["held"] = _held_slots(data)
     body["hold_seconds"] = HOLD_SECONDS
+    body["poll_seconds"] = POLL_SECONDS
     return JSONResponse(body, headers={**_NO_STORE, "X-Cache": "hit" if cached else "miss"})
 
 
@@ -256,9 +325,14 @@ def healthz() -> dict:
         "heartbeat_age_min": sysinfo.get("heartbeat_age_min"),
         "heartbeat_required": REQUIRE_HEARTBEAT,
         "holds": len(_held_slots(_cache["data"])),
+        "holds_persisted": bool(HOLDS_FILE) and _holds_error is None,
+        "holds_error": _holds_error,
         "cache_age_s": round(time.time() - _cache["t"]) if _cache["data"] else None,
         "refreshing": _cache["refreshing"],
         "stale": _cache["last_error"] is not None,
         "last_error": _cache["last_error"],
         "last_error_age_s": round(time.time() - _cache["last_error_t"]) if _cache["last_error_t"] else None,
     }
+
+
+_load_holds()   # on start: take over the holds of the previous process (pm2 restart, deploy)

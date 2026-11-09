@@ -36,14 +36,14 @@ top of `compute_slots.py`.
 |---|---|
 | `compute_slots.py` | reads the ICS (env `ICS_URL` or `--ics file`), expands recurrences, writes `slots.json` (`slots` list + `by_day` map + metadata). `--now` overrides the clock for tests. |
 | `site/index.html` | the page; served by `server.py` (or copied to `public/` by CI). Week grid, eligibility gate, paused banner, booking dialog (name / email / repeat email: syntax, typo dictionary `KNOWN`, `POST check-domain`). `FORM_BASE` + `Q` (three Forms question ids) build the pre-filled link, shown embedded (`&embed=true`) in the dialog. |
-| `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down), `POST /check-domain` (`{"domain"}` → MX/A lookup, 10-min cache, domain only, never logged), `/healthz`. `ICS_URL` from `.env`. |
+| `server.py` | **Current host: the owner's VPS.** FastAPI app: `/` = the page, `/slots.json` = live recomputation (cache `CACHE_SECONDS`, default 30; serves the last good copy if the feed is down; carries `held` + `poll_seconds`), `POST /hold` / `POST /unhold` (slot holds: slot key + random browser token + address, nothing else; renewed by the page while the dialog is open, `stage: form` = 30-min tail once the visitor reached the form; mirrored to `holds.json` — runtime file, not committed — so a restart keeps them), `POST /check-domain` (`{"domain"}` → MX/A lookup, 10-min cache, domain only, never logged), `/healthz`. `ICS_URL` from `.env`. |
 | `requirements-server.txt` | `requirements.txt` + fastapi + uvicorn + python-dotenv + dnspython (MX lookups). |
 | `ecosystem.config.js` | PM2 entry (own venv, own logs, uvicorn on 127.0.0.1:4010, `.env` via `--env-file`). |
-| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `SYNC_AFTER_SECONDS`, `REQUIRE_HEARTBEAT`, `HOLD_SECONDS`, `HOLD_PER_IP`). |
+| `.env.example` | template for `.env` (`ICS_URL`, optional `CACHE_SECONDS`, `SYNC_AFTER_SECONDS`, `REQUIRE_HEARTBEAT`, `HOLD_SECONDS`, `HOLD_PER_IP`, `HOLD_FORM_SECONDS`, `HOLD_MAX_SECONDS`, `HOLDS_FILE`, `POLL_SECONDS`). Every value has a default: an existing `.env` keeps working unchanged. |
 | `VERSION` | deploy marker shown in `/healthz`; bump it with each change. |
 | `.github/workflows/pages.yml` | **Current host: GitHub Pages.** Build + deploy on push to `main`, every 5 min, by hand, and on `repository_dispatch` type `refresh` (sent by Flow B after each booking → the booked slot vanishes within 1–2 min). `ICS_URL` = repository secret. |
 | `.gitlab-ci.yml` | Same job for AU GitLab Pages (`ICS_URL` = masked CI/CD variable); kept for when AU GitLab becomes available. |
-| `tests/` | `test_compute_slots.py` (rules), `test_heartbeat.py` (fail-closed heartbeat), `test_check_domain.py` (domain endpoint: invalid input, cache, no local part). |
+| `tests/` | `test_compute_slots.py` (rules), `test_heartbeat.py` (fail-closed heartbeat), `test_check_domain.py` (domain endpoint: invalid input, cache, no local part), `test_hold.py` (holds: refusal, renewal, form tail, ceiling, per-address cap, restart persistence, damaged file). `conftest.py` keeps the tests away from the real `holds.json`. |
 
 ## Deploy (VPS — current, live slots)
 
@@ -105,7 +105,8 @@ Every link in the chain either keeps working or stops bookings visibly. Nothing 
 | Power Automate heartbeat (`BRUXMAP - heartbeat`, every 15 min) | no 1-min Free event in the last 35 min | `/healthz` → `booking_open: false`; page shows **Booking is temporarily paused** and locks the buttons | closed |
 | Flow `BRUXMAP - booking` turned off | not detected: the Power Automate Management connector is not offered in the AU environment (heartbeat v3 dropped the check) | Power Automate itself emails the owner when it turns a flow off; **to pause bookings, turn the heartbeat flow off** (and do so whenever the booking flow is off) | closed once the heartbeat stops |
 | Flow B run fails mid-way | `Alert_owner_on_failure` card | owner gets a High-importance email with the response id | that one booking is handled by hand |
-| Two visitors look at the same slot | opening the dialog places a 10-min **hold** (`POST /hold`, server memory: slot + random browser token + address for a per-IP cap); others see "Being booked right now"; Cancel / another slot / leaving the page releases it | second visitor cannot select it | no wasted form; Flow B's calendar re-check remains the last line |
+| Two visitors look at the same slot | opening the dialog places a **hold** (`POST /hold`: slot + random browser token + address for a per-address cap of `HOLD_PER_IP`); the page renews it every 90 s while the dialog is open (up to 30 min), and once the visitor reaches the form the server keeps a 30-min tail (`HOLD_FORM_SECONDS`) even if the tab is closed, so the slot stays hidden until Flow B's event is in the feed; others see "Being booked right now" within `POLL_SECONDS`; Cancel / another slot / leaving the page releases it | second visitor cannot select it; if the first visitor's hold is lost anyway, the dialog says so before they fill the form; after Continue the block turns into "Booked by you" when the calendar shows the event | no wasted form; Flow B's calendar re-check remains the last line |
+| VPS restarted or redeployed while someone is filling the form | holds are mirrored to `holds.json` after every change and reloaded at start (`/healthz` → `holds_persisted: true`) | — | nothing lost; the visitor's slot stays reserved |
 | Two submissions for one slot anyway | trigger concurrency 1 + calendar re-check | second gets "please choose another" | no double booking |
 | Code deployed but process not restarted | `/healthz` → `version` older than `VERSION` in git | — | run `pm2 restart bruxmap-booking` |
 | Participant mistypes or garbles the input | page dialog: syntax, repeat, typo suggestion, domain MX; Flow B `InputOK` → Terminate (Cancelled) | nothing — no event, no email, no owner notice; run shows Cancelled | closed for that submission |
@@ -126,16 +127,16 @@ keep each until its session has taken place; delete everything after the campaig
 
 ```powershell
 cd <clone of this repository>
-python -m venv .venv; .\.venv\Scripts\pip install -q -r requirements.txt pytest
+python -m venv .venv; .\.venv\Scripts\pip install -q -r requirements-server.txt pytest
 .\.venv\Scripts\python -m pytest -q
 $env:ICS_URL = "<busy-only ICS link>"; .\.venv\Scripts\python compute_slots.py public\slots.json
-.\.venv\Scripts\pip install -q -r requirements-server.txt
 $env:ICS_URL = "<busy-only ICS link>"; .\.venv\Scripts\python -m uvicorn server:app --port 4010   # then open http://127.0.0.1:4010
 curl.exe -s -X POST -H "Content-Type: application/json" -d '{"domain":"gmail.com"}' http://127.0.0.1:4010/check-domain   # {"ok":true,...}
 ```
 
 Data: the page, the JSON and the repository hold date-times only. What the participant types in
 the dialog goes straight into the Microsoft Form link (AU tenant); the VPS receives only the email
-domain for the MX check. Bookings are anonymous Private events "BRUXMAP session (ref N)" in the
+domain for the MX check; `holds.json` (runtime, not committed) holds slot keys, random browser tokens
+and client addresses for at most an hour. Bookings are anonymous Private events "BRUXMAP session (ref N)" in the
 owner's calendar; names live in the Forms responses, the owner's mailbox and the Flow run history
 (secure inputs/outputs).
